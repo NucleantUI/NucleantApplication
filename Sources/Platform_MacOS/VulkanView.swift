@@ -10,7 +10,7 @@ import Metal
 ///
 /// Wire up `onFrame` to your Vulkan render loop; it receives the display-link
 /// delta time in seconds.  Pass `metalLayer` to vkCreateMetalSurfaceEXT.
-public final class DemoNSView: NSView {
+public final class VulkanView: NSView {
 
     /// The Metal layer MoltenVK uses for VkSurface creation.
     public private(set) var metalLayer: CAMetalLayer!

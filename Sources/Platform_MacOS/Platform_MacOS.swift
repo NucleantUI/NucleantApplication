@@ -2,12 +2,12 @@
 //  Platform_MacOS.swift
 //  NucleantApplication
 //
-
+import NucleantWindow
 
 import AppKit
 
 
-protocol WindowBaseDelegate: AnyObject {
+public protocol WindowBaseDelegate: AnyObject {
     func mouseDown(location: NSPoint)
     func mouseUp(location: NSPoint)
     func mouseDragged(location: NSPoint)
@@ -19,9 +19,49 @@ protocol WindowBaseDelegate: AnyObject {
     func keyUp(key: UInt16, chars:  String?)
 }
 
+extension NucleantWindow where Self: WindowBaseDelegate {
+    func mouseDown(location: NSPoint) {
+        on_mouse_down(x: location.x, y: location.y)
+    }
+    
+    func mouseUp(location: NSPoint) {
+        on_mouse_up(x: location.x, y: location.y)
+    }
+    
+    func mouseDragged(location: NSPoint) {
+        on_mouse_dragged(x: location.x, y: location.y)
+    }
+    
+    func mouseMoved(location: NSPoint) {
+        on_mouse_moved(x: location.x, y: location.y)
+    }
+    
+    func rightMouseDown(location: NSPoint) {
+        on_right_mouse_down(x: location.x, y: location.y)
+    }
+    
+    func rightMouseUp(location: NSPoint) {
+        on_right_mouse_up(x: location.x, y: location.y)
+    }
+    
+    func scrollWheel(deltaX: Double, deltaY: Double) {
+        on_scroll(dx: deltaX, dy: deltaY)
+    }
+    
+    func keyDown(key: UInt16, chars: String?) {
+        on_key_down(keyCode: key, characters: chars)
+    }
+    
+    func keyUp(key: UInt16, chars: String?) {
+        on_key_up(keyCode: key, characters: chars)
+    }
+    
+    
+    
+    
+}
 
-
-public final class PlatformWindow: NSWindow, NSWindowDelegate {
+public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where WindowBase: NucleantWindow & WindowBaseDelegate {
     
     public var on_close:            (()->Void)?
     
@@ -32,7 +72,7 @@ public final class PlatformWindow: NSWindow, NSWindowDelegate {
     let metalLayer: CAMetalLayer
     
     public override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
-        let view = DemoNSView(frame: .init(origin: .zero, size: contentRect.size))
+        let view = VulkanView(frame: .init(origin: .zero, size: contentRect.size))
         self.metalLayer = view.metalLayer
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         self.contentView = view
@@ -95,7 +135,7 @@ public final class PlatformWindow: NSWindow, NSWindowDelegate {
         if #available(macOS 14.0, *) {
             startCADisplayLink()
         } else {
-            startCVDisplayLink()
+            //startCVDisplayLink()
         }
     }
     
@@ -106,42 +146,6 @@ public final class PlatformWindow: NSWindow, NSWindowDelegate {
         }
     }
     
-}
-
-
-
-// MARK: - CVDisplayLink (macOS < 14)
-
-//@available(macOS, introduced: 10.4, obsoleted: 14.0)
-// ^ original annotation — `obsoleted` stops compiling under the macOS 14
-// deployment floor (Observation), so `deprecated` stands in below. The
-// whole CVDisplayLink path stays intact for a future pre-14 build.
-@available(macOS, introduced: 10.4, deprecated: 14.0)
-private extension PlatformWindow {
-    func startCVDisplayLink() {
-        var dl: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&dl)
-        guard let link = dl , let win_delegate else { return }
-        _displayLink = link
-
-        let ref = Unmanaged.passUnretained(win_delegate)
-        CVDisplayLinkSetOutputCallback(link, { _, _, outputTime, _, _, ctx -> CVReturn in
-            guard let ctx else { return kCVReturnError }
-            let ot = outputTime.pointee
-            let dt = Double(ot.videoRefreshPeriod) / Double(ot.videoTimeScale)
-            let win = Unmanaged<WindowBase>.fromOpaque(ctx).takeUnretainedValue()
-            DispatchQueue.main.async { win.onFrame(dt) }
-            return kCVReturnSuccess
-        }, ref.toOpaque())
-
-        CVDisplayLinkStart(link)
-    }
-}
-
-// MARK: - CADisplayLink (macOS 14+)
-
-@available(macOS 14.0, *)
-private extension PlatformWindow {
     func startCADisplayLink() {
         let link = displayLink(target: self, selector: #selector(cadlTick(_:)))
         link.add(to: .main, forMode: .common)
@@ -151,4 +155,6 @@ private extension PlatformWindow {
         win_delegate?.onFrame(link.targetTimestamp - link.timestamp)
     }
 }
+
+
 

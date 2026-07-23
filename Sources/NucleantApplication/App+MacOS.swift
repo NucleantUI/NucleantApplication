@@ -1,10 +1,11 @@
 //
-//  MacOS.swift
+//  App+MacOS.swift
 //  NucleantApplication
 //
 
 #if os(macOS)
 import AppKit
+import NucleantWindow
 import Platform_MacOS
 
 extension NucleantApplication {
@@ -29,8 +30,7 @@ public final class AppDelegate<App: NucleantApplication>: NSObject, NSApplicatio
     }
     
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        
-        app?.on_start()
+        app?.onStart()
     }
     
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -39,6 +39,7 @@ public final class AppDelegate<App: NucleantApplication>: NSObject, NSApplicatio
         
     }
 }
+
 
 
 #endif
