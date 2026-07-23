@@ -12,7 +12,7 @@ func getDependencies() -> [Package.Dependency] {
         ]
     }
     return [
-        .package(url: "https://github.com/NucleantUI/NucleantVulkan", branch: "refactor"),
+        .package(url: "https://github.com/NucleantUI/NucleantVulkan", branch: "master"),
     ]
 }
 
