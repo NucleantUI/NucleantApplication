@@ -20,39 +20,43 @@ public protocol WindowBaseDelegate: AnyObject {
 }
 
 extension NucleantWindow where Self: WindowBaseDelegate {
-    func mouseDown(location: NSPoint) {
+    // public so a conformance declared in another module (PyNucleantUI's
+    // WindowBase) can use these as the default witnesses for the public
+    // WindowBaseDelegate requirements — an internal default impl isn't
+    // visible there and the conformance would fail to type-check.
+    public func mouseDown(location: NSPoint) {
         on_mouse_down(x: location.x, y: location.y)
     }
-    
-    func mouseUp(location: NSPoint) {
+
+    public func mouseUp(location: NSPoint) {
         on_mouse_up(x: location.x, y: location.y)
     }
-    
-    func mouseDragged(location: NSPoint) {
+
+    public func mouseDragged(location: NSPoint) {
         on_mouse_dragged(x: location.x, y: location.y)
     }
-    
-    func mouseMoved(location: NSPoint) {
+
+    public func mouseMoved(location: NSPoint) {
         on_mouse_moved(x: location.x, y: location.y)
     }
-    
-    func rightMouseDown(location: NSPoint) {
+
+    public func rightMouseDown(location: NSPoint) {
         on_right_mouse_down(x: location.x, y: location.y)
     }
-    
-    func rightMouseUp(location: NSPoint) {
+
+    public func rightMouseUp(location: NSPoint) {
         on_right_mouse_up(x: location.x, y: location.y)
     }
-    
-    func scrollWheel(deltaX: Double, deltaY: Double) {
+
+    public func scrollWheel(deltaX: Double, deltaY: Double) {
         on_scroll(dx: deltaX, dy: deltaY)
     }
-    
-    func keyDown(key: UInt16, chars: String?) {
+
+    public func keyDown(key: UInt16, chars: String?) {
         on_key_down(keyCode: key, characters: chars)
     }
-    
-    func keyUp(key: UInt16, chars: String?) {
+
+    public func keyUp(key: UInt16, chars: String?) {
         on_key_up(keyCode: key, characters: chars)
     }
     
@@ -64,12 +68,12 @@ extension NucleantWindow where Self: WindowBaseDelegate {
 public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where WindowBase: NucleantWindow & WindowBaseDelegate {
     
     public var on_close:            (()->Void)?
-    
-    weak var win_delegate: WindowBase?
-    
+
+    public weak var win_delegate: WindowBase?
+
     private var _displayLink: CVDisplayLink?
-    
-    let metalLayer: CAMetalLayer
+
+    public let metalLayer: CAMetalLayer
     
     public override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         let view = VulkanView(frame: .init(origin: .zero, size: contentRect.size))

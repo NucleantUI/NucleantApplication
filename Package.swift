@@ -14,7 +14,8 @@ let package = Package(
             name: "NucleantApplication",
             targets: ["NucleantApplication"]
         ),
-        .library(name: "NucleantWindow", targets: ["NucleantWindow"])
+        .library(name: "NucleantWindow", targets: ["NucleantWindow"]),
+        .library(name: "Platform_MacOS", targets: ["Platform_MacOS"])
     ],
     dependencies: [
         .package(path: "../NucleantVulkan")
