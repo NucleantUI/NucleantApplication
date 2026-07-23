@@ -1,0 +1,24 @@
+{
+  "originHash" : "c0531b9571710f2a8b151961aeb97d8a44a5e5a278a034f7557d817f483c6104",
+  "pins" : [
+    {
+      "identity" : "nucleantvulkan",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/NucleantUI/NucleantVulkan",
+      "state" : {
+        "branch" : "refactor",
+        "revision" : "5da2cedff733ac3dc7bf4f049551aa97d6b4beec"
+      }
+    },
+    {
+      "identity" : "sulphurgeometry",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/NucleantUI/SulphurGeometry",
+      "state" : {
+        "branch" : "init_upload",
+        "revision" : "4ed1341820364d5223469ca201ffcce48b901d2b"
+      }
+    }
+  ],
+  "version" : 3
+}
