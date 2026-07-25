@@ -17,6 +17,8 @@ public protocol NucleantWindow: AnyObject {
     
     func onFrame(_ dt: Double)
     //func on_frame(dt: Double)
+    func on_size(w: Double, h: Double)
+
     func on_mouse_down(x: Double, y: Double)
     func on_mouse_up(x: Double, y: Double)
     func on_mouse_dragged(x: Double, y: Double)

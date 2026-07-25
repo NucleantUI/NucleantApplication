@@ -48,7 +48,26 @@ public final class VulkanView: NSView {
         ml.framebufferOnly = false
         return ml
     }
-    
+
+    // MARK: - Resize
+
+    /// Keep the Metal layer's pixel buffer in step with the view. The
+    /// `autoresizingMask` only tracks the layer's *frame*, not its
+    /// `drawableSize` (the render target's actual resolution) — so without
+    /// this the surface stays the old size and the content stretches on
+    /// resize. The engine reads `drawableSize` every frame and recreates its
+    /// swapchain when it changes, so updating it here is what makes the render
+    /// surface follow the window.
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard let metalLayer else { return }
+        metalLayer.frame = bounds
+        metalLayer.drawableSize = CGSize(
+            width:  newSize.width  * metalLayer.contentsScale,
+            height: newSize.height * metalLayer.contentsScale
+        )
+    }
+
     // MARK: - Input events
 
     public override var acceptsFirstResponder: Bool { true }

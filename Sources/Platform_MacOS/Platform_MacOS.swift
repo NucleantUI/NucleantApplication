@@ -80,6 +80,7 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
         self.metalLayer = view.metalLayer
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         self.contentView = view
+        self.delegate = self
         self.startDisplayLink()
     }
     
@@ -122,8 +123,17 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     
     
     public func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        
+
         return frameSize
+    }
+
+    public func windowDidResize(_ notification: Notification) {
+        // Report the content area (the render surface), not the whole window
+        // frame — the root widget fills the content, matching present's
+        // contentRect. The layer's drawableSize follows via VulkanView; this
+        // drives the widget-tree relayout.
+        guard let size = contentView?.bounds.size else { return }
+        win_delegate?.on_size(w: Double(size.width), h: Double(size.height))
     }
     
     
