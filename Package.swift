@@ -19,6 +19,9 @@ func getDependencies() -> [Package.Dependency] {
 let package = Package(
     name: "NucleantApplication",
     platforms: [
+        // iOS 17 to match NucleantVulkan (Observation framework floor); the
+        // parallel of the macOS(.v14) minimum.
+        .iOS(.v17),
         .macOS(.v14)
     ],
     products: [
@@ -28,7 +31,8 @@ let package = Package(
             targets: ["NucleantApplication"]
         ),
         .library(name: "NucleantWindow", targets: ["NucleantWindow"]),
-        .library(name: "Platform_MacOS", targets: ["Platform_MacOS"])
+        .library(name: "Platform_MacOS", targets: ["Platform_MacOS"]),
+        .library(name: "Platform_iOS", targets: ["Platform_iOS"])
     ],
     dependencies: getDependencies(),
     targets: [
@@ -38,11 +42,18 @@ let package = Package(
             name: "NucleantApplication",
             dependencies: [
                 "NucleantWindow",
-                .byName(name: "Platform_MacOS", condition: .when(platforms: [.macOS]))
+                .byName(name: "Platform_MacOS", condition: .when(platforms: [.macOS])),
+                .byName(name: "Platform_iOS", condition: .when(platforms: [.iOS]))
             ]
         ),
         .target(
             name: "Platform_MacOS",
+            dependencies: [
+                "NucleantWindow"
+            ]
+        ),
+        .target(
+            name: "Platform_iOS",
             dependencies: [
                 "NucleantWindow"
             ]

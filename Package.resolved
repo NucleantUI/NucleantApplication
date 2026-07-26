@@ -1,13 +1,13 @@
 {
-  "originHash" : "c0531b9571710f2a8b151961aeb97d8a44a5e5a278a034f7557d817f483c6104",
+  "originHash" : "bcddd964184ce8f0fcc4bc332c7cd5b858e1f5e1f1bbd96b84ca9a9fc8d46ac0",
   "pins" : [
     {
       "identity" : "nucleantvulkan",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/NucleantUI/NucleantVulkan",
       "state" : {
-        "branch" : "refactor",
-        "revision" : "5da2cedff733ac3dc7bf4f049551aa97d6b4beec"
+        "branch" : "master",
+        "revision" : "d73fbb51a8bd37223507dc936f417b5e9cee1d0d"
       }
     },
     {

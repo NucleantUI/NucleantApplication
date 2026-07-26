@@ -2,6 +2,7 @@
 //  NSView.swift
 //  SulphurXcodeDemo
 //
+#if os(macOS)
 import AppKit
 import QuartzCore
 import Metal
@@ -87,7 +88,8 @@ public final class VulkanView: NSView {
         trackingArea = area
     }
 
-    
+
 }
+#endif
 
 
