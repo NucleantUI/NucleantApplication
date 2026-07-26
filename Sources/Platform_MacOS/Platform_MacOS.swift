@@ -2,6 +2,7 @@
 //  Platform_MacOS.swift
 //  NucleantApplication
 //
+#if os(macOS)
 import NucleantWindow
 
 import AppKit
@@ -169,6 +170,7 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
         win_delegate?.onFrame(link.targetTimestamp - link.timestamp)
     }
 }
+#endif
 
 
 

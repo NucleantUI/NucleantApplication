@@ -28,5 +28,24 @@ public protocol NucleantWindow: AnyObject {
     func on_scroll(dx: Double, dy: Double)
     func on_key_down(keyCode: UInt16, characters: String?)
     func on_key_up(keyCode: UInt16, characters: String?)
+
+    // Touch input (iOS). `id` is a per-window stable identifier for one finger,
+    // handed out by the platform layer for the lifetime of a touch sequence so
+    // multitouch gestures can be tracked across down → moved → up. Coordinates
+    // are in the same content space as the mouse callbacks.
+    func on_touch_down(id: Int, x: Double, y: Double)
+    func on_touch_moved(id: Int, x: Double, y: Double)
+    func on_touch_up(id: Int, x: Double, y: Double)
+    func on_touch_cancelled(id: Int, x: Double, y: Double)
+}
+
+// Default no-op touch handlers so conformers that don't care about touch (e.g.
+// the macOS mouse/keyboard windows) stay unaffected; each platform's window
+// overrides only what it uses.
+public extension NucleantWindow {
+    func on_touch_down(id: Int, x: Double, y: Double) {}
+    func on_touch_moved(id: Int, x: Double, y: Double) {}
+    func on_touch_up(id: Int, x: Double, y: Double) {}
+    func on_touch_cancelled(id: Int, x: Double, y: Double) {}
 }
 
