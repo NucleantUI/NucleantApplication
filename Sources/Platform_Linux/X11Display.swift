@@ -126,6 +126,11 @@ public final class X11Display {
         windows.removeValue(forKey: handle)
     }
 
+    /// Whether any window is still live — what `PlatformWindow`'s default
+    /// close handler checks before stopping the event loop, so closing one of
+    /// several open windows doesn't end the whole app.
+    var hasNoLiveWindows: Bool { windows.isEmpty }
+
     private func window(for handle: xcb_window_t) -> X11Window? {
         guard let box = windows[handle] else { return nil }
         guard let window = box.window else {

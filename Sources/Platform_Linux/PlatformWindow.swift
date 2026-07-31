@@ -243,13 +243,22 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
         if let on_close {
             on_close()
         } else {
+            // Only stop the event loop once *this* was the last live window —
+            // otherwise closing one of several open windows would end the
+            // whole app instead of just that window, which is the
+            // `applicationShouldTerminateAfterLastWindowClosed` behaviour this
+            // is meant to match.
             switch backend {
             case .wayland(let surface):
                 surface.destroy()
-                WaylandDisplay.shared.stop()
+                if WaylandDisplay.shared.hasNoLiveSurfaces {
+                    WaylandDisplay.shared.stop()
+                }
             case .x11(let window):
                 window.destroy()
-                X11Display.shared.stop()
+                if X11Display.shared.hasNoLiveWindows {
+                    X11Display.shared.stop()
+                }
             }
         }
     }

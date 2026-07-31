@@ -202,6 +202,11 @@ public final class WaylandDisplay {
         }
     }
 
+    /// Whether any window is still live — what `PlatformWindow`'s default
+    /// close handler checks before stopping the event loop, so closing one of
+    /// several open windows doesn't end the whole app.
+    var hasNoLiveSurfaces: Bool { surfaces.isEmpty }
+
     private func surface(for handle: OpaquePointer?) -> WaylandSurface? {
         guard let handle else { return nil }
         guard let box = surfaces[handle] else { return nil }
