@@ -53,18 +53,30 @@ public final class AppDelegate<App: NucleantApplication> {
 
     /// Blocks until the event loop stops. `onStart()` runs first — that's
     /// where windows get created, and a window has to exist before the loop
-    /// has anything to pump.
+    /// has anything to pump. Which connection to make and which loop to run
+    /// follows the same `LinuxSession.detect()` every `PlatformWindow` picks
+    /// its backend from, so the two always agree.
     public func run() throws {
-        try WaylandDisplay.shared.connect()
-        app?.onStart()
-        WaylandDisplay.shared.run()
+        switch LinuxSession.detect() {
+        case .wayland:
+            try WaylandDisplay.shared.connect()
+            app?.onStart()
+            WaylandDisplay.shared.run()
+        case .x11:
+            try X11Display.shared.connect()
+            app?.onStart()
+            X11Display.shared.run()
+        }
     }
 
     /// Ends the event loop, so a blocked `run()` returns. Windows are left
     /// intact; the counterpart of `NSApplication.stop(_:)` rather than of
     /// `exit()`.
     public func terminate() {
-        WaylandDisplay.shared.stop()
+        switch LinuxSession.detect() {
+        case .wayland: WaylandDisplay.shared.stop()
+        case .x11: X11Display.shared.stop()
+        }
     }
 }
 #endif

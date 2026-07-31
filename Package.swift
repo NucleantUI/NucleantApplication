@@ -74,11 +74,20 @@ func platformTargets() -> [Target] {
                     .linkedLibrary("wayland-client")
                 ]
             ),
+            // libxcb core only — no xcb-icccm/xcb-ewmh. WM_PROTOCOLS,
+            // WM_DELETE_WINDOW, _NET_WM_NAME etc. are set with plain
+            // xcb_change_property calls in X11Display/X11Window rather than
+            // pulling in those convenience libraries for a handful of atoms.
+            .systemLibrary(
+                name: "CXCB",
+                path: "Sources/CXCB"
+            ),
             .target(
                 name: "Platform_Linux",
                 dependencies: [
                     "NucleantWindow",
-                    "CWayland"
+                    "CWayland",
+                    "CXCB"
                 ]
             ),
             // `swift run WaylandProbe` — opens a toplevel with no renderer

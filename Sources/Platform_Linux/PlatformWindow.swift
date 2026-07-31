@@ -5,104 +5,153 @@
 #if os(Linux)
 import NucleantWindow
 import CWayland
+import CXCB
 
 /// The Linux counterpart to macOS's `NSWindow`-derived `PlatformWindow` and
-/// iOS's `UIWindow` one: a Wayland toplevel that paces frames off the
-/// compositor and forwards pointer, keyboard and touch input to its
-/// `win_delegate`.
+/// iOS's `UIWindow` one: a toplevel that paces frames off its windowing
+/// system and forwards pointer, keyboard and touch input to its
+/// `win_delegate`. Picks Wayland or X11 at init time via `LinuxSession.detect()`
+/// — most desktop Linux is still X11 by default, so this is what makes
+/// windows real, WM-managed, movable top-levels there instead of requiring a
+/// Wayland session that mightn't exist.
 ///
 /// Kept generic (not existential) for the same reason as the other two —
 /// `NucleantWindow` has an associated `Node`, so a concrete `WindowBase` type
 /// is needed to call its members. The C-callback plumbing that can't live in
-/// a generic context sits one layer down in `WaylandSurface`.
+/// a generic context sits one layer down in `WaylandSurface` / `X11Window`.
 ///
 /// ## Vulkan
 ///
-/// There is no `CAMetalLayer` here to hand a render engine. Wayland's
-/// equivalent is the pair of raw handles `displayHandle` (`wl_display *`) and
-/// `surfaceHandle` (`wl_surface *`), which is exactly what
-/// `VkWaylandSurfaceCreateInfoKHR` takes; size the swapchain from
-/// `bufferWidth`/`bufferHeight`, which are in device pixels rather than the
-/// logical points the delegate callbacks use.
+/// There is no `CAMetalLayer` here to hand a render engine. Each backend has
+/// its own native surface handle shape (`VkWaylandSurfaceCreateInfoKHR` wants
+/// `wl_display*`/`wl_surface*`; `VkXcbSurfaceCreateInfoKHR` wants
+/// `xcb_connection_t*`/`xcb_window_t`) — `vulkanSurfaceKind` is what a caller
+/// switches on to know which `VulkanRenderEngine` initializer to use. Size the
+/// swapchain from `bufferWidth`/`bufferHeight`, which are in device pixels
+/// rather than the logical points the delegate callbacks use.
 public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
     where WindowBase: NucleantWindow & WaylandWindowDelegate {
 
-    /// Called when the compositor relays a close request (the titlebar's ✕).
-    /// Set it to take over what closing means; leave it nil and the window
-    /// tears itself down and stops the event loop, which is the
-    /// `applicationShouldTerminateAfterLastWindowClosed` behaviour macOS has.
+    /// Which native surface handles to build a `VulkanRenderEngine` from.
+    public enum VulkanSurfaceKind {
+        case wayland(display: OpaquePointer?, surface: OpaquePointer?)
+        case xcb(connection: OpaquePointer?, window: xcb_window_t)
+    }
+
+    /// Called when the windowing system relays a close request (the
+    /// titlebar's ✕). Set it to take over what closing means; leave it nil
+    /// and the window tears itself down and stops the event loop, which is
+    /// the `applicationShouldTerminateAfterLastWindowClosed` behaviour macOS
+    /// has.
     public var on_close: (() -> Void)?
 
     /// Strongly held by the owner; referenced weakly here so the window
     /// doesn't retain its delegate. Same contract as macOS/iOS.
     public weak var win_delegate: WindowBase?
 
-    private let surface: WaylandSurface
+    private enum Backend {
+        case wayland(WaylandSurface)
+        case x11(X11Window)
+    }
+    private let backend: Backend
 
     // MARK: - Init
 
     /// - Parameters:
-    ///   - width: requested width in logical points. The compositor gets the
-    ///     final say — a tiling window manager will hand back its own size
-    ///     through `on_size` before the first frame.
+    ///   - width: requested width in logical points. The windowing system
+    ///     gets the final say — a tiling window manager will hand back its
+    ///     own size through `on_size` before the first frame.
     ///   - height: requested height in logical points.
     ///   - title: shown in the titlebar and the task switcher.
     ///
-    /// There is no origin parameter, unlike macOS's `contentRect`: Wayland
-    /// clients cannot position their own windows. Placement is the
-    /// compositor's, by design.
+    /// There is no origin parameter: neither Wayland nor (in practice, given
+    /// a window manager) X11 clients get to position their own windows.
+    /// Placement belongs to the compositor/WM, by design.
     public init(width: Int, height: Int, title: String = "Nucleant") throws {
-        surface = try WaylandSurface(
-            width: Double(width),
-            height: Double(height),
-            title: title
-        )
-        surface.handler = self
+        switch LinuxSession.detect() {
+        case .wayland:
+            let surface = try WaylandSurface(width: Double(width), height: Double(height), title: title)
+            backend = .wayland(surface)
+        case .x11:
+            let window = try X11Window(width: Double(width), height: Double(height), title: title)
+            backend = .x11(window)
+        }
+        switch backend {
+        case .wayland(let surface): surface.handler = self
+        case .x11(let window): window.handler = self
+        }
         // Start ticking immediately, matching macOS/iOS where the display
         // link runs from init. It no-ops until `win_delegate` is set.
-        surface.startFrameLoop()
+        startFrameLoop()
     }
 
     deinit {
-        surface.handler = nil
-        surface.destroy()
+        switch backend {
+        case .wayland(let surface):
+            surface.handler = nil
+            surface.destroy()
+        case .x11(let window):
+            window.handler = nil
+            window.destroy()
+        }
     }
 
     // MARK: - Window
 
     public func setTitle(_ title: String) {
-        surface.setTitle(title)
+        switch backend {
+        case .wayland(let surface): surface.setTitle(title)
+        case .x11(let window): window.setTitle(title)
+        }
     }
 
     public func minimize() {
-        surface.minimize()
+        switch backend {
+        case .wayland(let surface): surface.minimize()
+        case .x11(let window): window.minimize()
+        }
     }
 
-    /// Asks the compositor to maximize or restore. The new size arrives
-    /// through `on_size` once the compositor has decided on it — nothing
-    /// changes synchronously here.
+    /// Asks the windowing system to maximize or restore. The new size arrives
+    /// through `on_size` once it's been decided — nothing changes
+    /// synchronously here.
     public func setMaximized(_ maximized: Bool) {
-        surface.setMaximized(maximized)
+        switch backend {
+        case .wayland(let surface): surface.setMaximized(maximized)
+        case .x11(let window): window.setMaximized(maximized)
+        }
     }
 
-    /// Asks the compositor to go fullscreen or leave it, on an output of its
-    /// choosing. Same asynchronous contract as `setMaximized`.
+    /// Asks the windowing system to go fullscreen or leave it. Same
+    /// asynchronous contract as `setMaximized`.
     public func setFullscreen(_ fullscreen: Bool) {
-        surface.setFullscreen(fullscreen)
+        switch backend {
+        case .wayland(let surface): surface.setFullscreen(fullscreen)
+        case .x11(let window): window.setFullscreen(fullscreen)
+        }
     }
 
     /// Flushes the connection so the window is up before whatever the caller
     /// does next. The counterpart of `makeKeyAndOrderFront` /
-    /// `makeKeyAndVisible` — but only nominally: a Wayland window becomes
-    /// visible when its first buffer is attached, i.e. on the first present,
-    /// not on demand.
+    /// `makeKeyAndVisible` — but only nominally on Wayland: a Wayland window
+    /// becomes visible when its first buffer is attached, i.e. on the first
+    /// present, not on demand. X11's `xcb_map_window` here is the real thing.
     public func show() {
-        surface.startFrameLoop()
-        WaylandDisplay.shared.flush()
+        switch backend {
+        case .wayland(let surface):
+            surface.startFrameLoop()
+            WaylandDisplay.shared.flush()
+        case .x11(let window):
+            window.startFrameLoop()
+            window.show()
+        }
     }
 
     public func close() {
-        surface.destroy()
+        switch backend {
+        case .wayland(let surface): surface.destroy()
+        case .x11(let window): window.destroy()
+        }
         on_close?()
     }
 
@@ -110,39 +159,73 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
 
     /// Logical size, in points — the space `on_size` and every input
     /// coordinate are expressed in.
-    public var width: Double { surface.width }
-    public var height: Double { surface.height }
+    public var width: Double {
+        switch backend {
+        case .wayland(let surface): surface.width
+        case .x11(let window): window.width
+        }
+    }
+    public var height: Double {
+        switch backend {
+        case .wayland(let surface): surface.height
+        case .x11(let window): window.height
+        }
+    }
 
-    /// Device pixels per logical point. The Wayland analogue of
+    /// Device pixels per logical point. The Wayland/X11 analogue of
     /// `CAMetalLayer.contentsScale`.
-    public var scale: Double { surface.scale }
+    public var scale: Double {
+        switch backend {
+        case .wayland(let surface): surface.scale
+        case .x11(let window): window.scale
+        }
+    }
 
     /// Render-target size in device pixels — what the swapchain is sized to.
-    public var bufferWidth: UInt32 { surface.bufferWidth }
-    public var bufferHeight: UInt32 { surface.bufferHeight }
+    public var bufferWidth: UInt32 {
+        switch backend {
+        case .wayland(let surface): surface.bufferWidth
+        case .x11(let window): window.bufferWidth
+        }
+    }
+    public var bufferHeight: UInt32 {
+        switch backend {
+        case .wayland(let surface): surface.bufferHeight
+        case .x11(let window): window.bufferHeight
+        }
+    }
 
     // MARK: - Vulkan handles
 
-    /// `wl_display *` for `VkWaylandSurfaceCreateInfoKHR.display`.
-    public var displayHandle: OpaquePointer? { WaylandDisplay.shared.displayHandle }
-
-    /// `wl_surface *` for `VkWaylandSurfaceCreateInfoKHR.surface`.
-    public var surfaceHandle: OpaquePointer? { surface.handle }
+    public var vulkanSurfaceKind: VulkanSurfaceKind {
+        switch backend {
+        case .wayland(let surface):
+            return .wayland(display: WaylandDisplay.shared.displayHandle, surface: surface.handle)
+        case .x11(let window):
+            return .xcb(connection: X11Display.shared.connectionHandle, window: window.handle)
+        }
+    }
 
     // MARK: - Frame loop
 
-    /// Starts the compositor frame-callback chain — the Wayland stand-in for
+    /// Starts the compositor/WM frame-callback chain — the Linux stand-in for
     /// `startDisplayLink()`. Idempotent; init already calls it.
     public func startFrameLoop() {
-        surface.startFrameLoop()
+        switch backend {
+        case .wayland(let surface): surface.startFrameLoop()
+        case .x11(let window): window.startFrameLoop()
+        }
     }
 
     /// Stops driving frames. The counterpart of `stopDisplayLink()`.
     public func stopFrameLoop() {
-        surface.stopFrameLoop()
+        switch backend {
+        case .wayland(let surface): surface.stopFrameLoop()
+        case .x11(let window): window.stopFrameLoop()
+        }
     }
 
-    // MARK: - WaylandSurfaceHandler
+    // MARK: - WaylandSurfaceHandler (shared event-forwarding surface for both backends)
 
     func waylandSurfaceDidTick(dt: Double) {
         win_delegate?.onFrame(dt)
@@ -160,8 +243,14 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
         if let on_close {
             on_close()
         } else {
-            surface.destroy()
-            WaylandDisplay.shared.stop()
+            switch backend {
+            case .wayland(let surface):
+                surface.destroy()
+                WaylandDisplay.shared.stop()
+            case .x11(let window):
+                window.destroy()
+                X11Display.shared.stop()
+            }
         }
     }
 

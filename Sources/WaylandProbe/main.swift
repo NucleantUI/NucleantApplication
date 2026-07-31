@@ -133,7 +133,8 @@ do {
     let delegate = ProbeWindow()
     delegate.window = window
     delegate.bufferSize = SIMD2(Int32(window.bufferWidth), Int32(window.bufferHeight))
-    if let displayHandle = window.displayHandle, let surfaceHandle = window.surfaceHandle {
+    if case .wayland(let displayHandle, let surfaceHandle) = window.vulkanSurfaceKind,
+       let displayHandle, let surfaceHandle {
         delegate.painter = ShmPainter(display: displayHandle, surface: surfaceHandle)
     }
     window.win_delegate = delegate
@@ -141,8 +142,7 @@ do {
 
     print("window: \(window.width) x \(window.height) pt, "
         + "\(window.bufferWidth) x \(window.bufferHeight) px, scale \(window.scale)")
-    print("wl_display: \(String(describing: window.displayHandle))")
-    print("wl_surface: \(String(describing: window.surfaceHandle))")
+    print("surface kind: \(window.vulkanSurfaceKind)")
     print("running — ^C to quit")
 
     display.run()
