@@ -1,6 +1,7 @@
 // swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
 
 let devMode = true
@@ -24,8 +25,19 @@ func getDependencies() -> [Package.Dependency] {
 // SDK has. Package.swift is compiled by the host toolchain, so `#if os(Linux)`
 // here means "host is Linux", which for this package is the same thing as
 // "target is Linux": unlike Android there is no cross-compile path into it.
+// Android is always a cross-compile — Package.swift is compiled by the *host*
+// toolchain, so `#if os(Android)` here would describe the host and never be
+// true. It is an explicit env opt-in, the same signal NucleantVulkan, CPython,
+// PySwiftKit and PyNucleantUI all use.
+let isAndroid = ProcessInfo.processInfo.environment["SWIFT_ANDROID_HOME"] != nil
+    || ProcessInfo.processInfo.environment["ANDROID_BUILD"] != nil
+
 #if os(Linux)
-let isLinux = true
+// `&& !isAndroid`: the Android host *is* Linux, and a `.when(platforms:)`
+// condition only gates linking, not whether a target exists — so without this
+// the Linux provider still gets built, and CWayland fails immediately on
+// <wayland-util.h>, which no NDK sysroot has.
+let isLinux = !isAndroid
 #else
 let isLinux = false
 #endif
@@ -37,6 +49,9 @@ func platformProducts() -> [Product] {
     ]
     if isLinux {
         products.append(.library(name: "Platform_Linux", targets: ["Platform_Linux"]))
+    }
+    if isAndroid {
+        products.append(.library(name: "Platform_Android", targets: ["Platform_Android"]))
     }
     return products
 }
@@ -108,6 +123,21 @@ func platformTargets() -> [Target] {
             )
         ])
     }
+    if isAndroid {
+        // No C shim of its own: the ANativeWindow handle arrives from the
+        // bootstrap through a C ABI, and Vulkan's Android surface extension is
+        // reached through NucleantVulkan's CVulkan (the NDK provides both).
+        targets.append(
+            .target(
+                name: "Platform_Android",
+                dependencies: [
+                    "NucleantWindow",
+                    .product(name: "NucleantVulkan", package: "NucleantVulkan"),
+                    .product(name: "VulkanCore", package: "NucleantVulkan")
+                ]
+            )
+        )
+    }
     return targets
 }
 
@@ -121,6 +151,9 @@ func platformDependencies() -> [Target.Dependency] {
     ]
     if isLinux {
         deps.append(.byName(name: "Platform_Linux", condition: .when(platforms: [.linux])))
+    }
+    if isAndroid {
+        deps.append(.byName(name: "Platform_Android", condition: .when(platforms: [.android])))
     }
     return deps
 }

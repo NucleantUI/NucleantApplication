@@ -13,7 +13,7 @@ public protocol NucleantApplication: AnyObject {
     
     
     
-    #if os(macOS) || os(iOS) || os(Linux)
+    #if os(macOS) || os(iOS) || os(Linux) || os(Android)
     // Each platform compiles its own `AppDelegate` type (NSApplicationDelegate
     // on macOS, UIApplicationDelegate on iOS, a plain lifecycle object owning
     // the Wayland event loop on Linux) — only one is in scope per build, so
