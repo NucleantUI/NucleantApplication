@@ -6,6 +6,11 @@ import PackageDescription
 
 let devMode = true
 
+let env = ProcessInfo.processInfo.environment
+
+let PSK_DEVELOPMENT = env["PSK_DEVELOPMENT"] == "1"
+let PIP_MODE = env["PIP_MODE"] == "1"
+
 func getDependencies() -> [Package.Dependency] {
     if devMode {
         return [
@@ -42,18 +47,69 @@ let isLinux = !isAndroid
 let isLinux = false
 #endif
 
-func platformProducts() -> [Product] {
-    var products: [Product] = [
-        .library(name: "Platform_MacOS", targets: ["Platform_MacOS"]),
-        .library(name: "Platform_iOS", targets: ["Platform_iOS"])
-    ]
+/// Every module the package vends, for PIP_MODE's single dynamic library.
+/// Platform_Linux and Platform_Android join the list on their own host for the
+/// same reason they get their own product elsewhere: only one platform provider
+/// exists per build. The Apple two are unconditional because their sources are
+/// `#if os(...)`-guarded and so compile to empty modules everywhere else.
+func pipProductTargets() -> [String] {
+    var targets = ["NucleantApplication", "NucleantWindow", "Platform_MacOS", "Platform_iOS"]
     if isLinux {
-        products.append(.library(name: "Platform_Linux", targets: ["Platform_Linux"]))
+        targets.append("Platform_Linux")
     }
     if isAndroid {
-        products.append(.library(name: "Platform_Android", targets: ["Platform_Android"]))
+        targets.append("Platform_Android")
+    }
+    return targets
+}
+
+func platformProducts() -> [Product] {
+    var products: [Product] = [
+        .library(name: "Platform_MacOS", type: .static, targets: ["Platform_MacOS"]),
+        .library(name: "Platform_iOS", type: .static, targets: ["Platform_iOS"])
+    ]
+    if isLinux {
+        products.append(.library(name: "Platform_Linux", type: .static, targets: ["Platform_Linux"]))
+    }
+    if isAndroid {
+        products.append(.library(name: "Platform_Android", type: .static, targets: ["Platform_Android"]))
     }
     return products
+}
+
+func packageProducts() -> [Product] {
+    if PIP_MODE {
+        // One dynamic library for the whole package. SwiftPM links a
+        // same-package target dependency *statically* even when that target is
+        // also its own dynamic product, so a product per target would put
+        // Platform_MacOS in both libPlatform_MacOS.dylib and
+        // libNucleantApplication.dylib (which depends on it), and NucleantWindow
+        // in all three. Two copies of a module in one process means two type
+        // descriptors: WindowBase's `NucleantWindow` conformance registers
+        // against one copy while PlatformWindow<WindowBase> resolves against the
+        // other, so instantiating that generic's metadata returns null and the
+        // field-offset load segfaults. Shipping every target in a single image
+        // keeps exactly one descriptor per module. Consumers import the modules
+        // they need — a library product vends all of its targets' modules.
+        return [
+            .library(
+                name: "NucleantApplication",
+                type: .static,
+                targets: pipProductTargets()
+            )
+        ]
+    }
+    // Static/Xcode mode: one product per target, all linked once into the
+    // app binary and deduplicated by the static linker — no duplication to
+    // avoid, and consumers keep addressing the products individually.
+    return [
+        .library(
+            name: "NucleantApplication",
+            type: .static,
+            targets: ["NucleantApplication"]
+        ),
+        .library(name: "NucleantWindow", type: .static, targets: ["NucleantWindow"])
+    ] + platformProducts()
 }
 
 func platformTargets() -> [Target] {
@@ -61,13 +117,15 @@ func platformTargets() -> [Target] {
         .target(
             name: "Platform_MacOS",
             dependencies: [
-                "NucleantWindow"
+                "NucleantWindow",
+                .product(name: "NucleantVulkan", package: "NucleantVulkan"),
             ]
         ),
         .target(
             name: "Platform_iOS",
             dependencies: [
-                "NucleantWindow"
+                "NucleantWindow",
+                .product(name: "NucleantVulkan", package: "NucleantVulkan"),
             ]
         )
     ]
@@ -168,14 +226,7 @@ let package = Package(
         .iOS(.v17),
         .macOS(.v14)
     ],
-    products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
-            name: "NucleantApplication",
-            targets: ["NucleantApplication"]
-        ),
-        .library(name: "NucleantWindow", targets: ["NucleantWindow"])
-    ] + platformProducts(),
+    products: packageProducts(),
     dependencies: getDependencies(),
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -191,7 +242,7 @@ let package = Package(
             dependencies: [
                 .product(name: "VulkanCore", package: "NucleantVulkan"),
                 .product(name: "NucleantVulkan", package: "NucleantVulkan"),
-
+                .product(name: "NucleantShader", package: "NucleantVulkan"),
             ]
         ),
         .testTarget(
