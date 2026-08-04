@@ -127,11 +127,13 @@ func platformTargets() -> [Target] {
         // No C shim of its own: the ANativeWindow handle arrives from the
         // bootstrap through a C ABI, and Vulkan's Android surface extension is
         // reached through NucleantVulkan's CVulkan (the NDK provides both).
+        targets.append(.systemLibrary(name: "CAndroidChoreographer"))
         targets.append(
             .target(
                 name: "Platform_Android",
                 dependencies: [
                     "NucleantWindow",
+                    "CAndroidChoreographer",
                     .product(name: "NucleantVulkan", package: "NucleantVulkan"),
                     .product(name: "VulkanCore", package: "NucleantVulkan")
                 ]

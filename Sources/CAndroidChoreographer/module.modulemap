@@ -1,0 +1,7 @@
+module CAndroidChoreographer [system] {
+    header "include/shim.h"
+    // AChoreographer_* and ALooper_* live in libandroid.so, which is part of
+    // the platform on every device — nothing to ship with the app.
+    link "android"
+    export *
+}

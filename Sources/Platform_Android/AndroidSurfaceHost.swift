@@ -4,6 +4,7 @@
 //
 #if os(Android)
 import Foundation
+import Android  // dlsym/dlfcn — Foundation does not re-export it on Android
 
 /// Receives the app's render surface and input from the Android bootstrap.
 ///
@@ -65,6 +66,80 @@ public enum AndroidSurfaceHost {
         lock.lock()
         defer { lock.unlock() }
         return (window, width, height)
+    }
+
+    /// Asks the bootstrap to re-dispatch the surface it already has.
+    ///
+    /// The direction described above has a gap: the bootstrap looks these
+    /// symbols up lazily *and caches the miss*, so every surface event that
+    /// fires before `_nucleant.so` loads is dropped for good. That is the
+    /// normal case, not an edge one — the Activity's surface is created while
+    /// assets are still unpacking, tens of seconds before Python starts, and
+    /// there is no second event to recover on. `window` then stays nil and the
+    /// first `present()` finds nothing to draw into.
+    ///
+    /// The bootstrap exports `nucleant_refresh_host_hooks` to close it: it
+    /// clears the cached misses and replays the live surface through
+    /// `nucleant_android_surface_created`. Reached by dlsym for the same reason
+    /// the hooks above are — the two libraries share no link-time relationship,
+    /// only the C ABI.
+    ///
+    /// Idempotent and cheap; a miss means the bootstrap predates the symbol, in
+    /// which case behaviour is exactly what it was before.
+    static func replayFromBootstrap() {
+        guard replayOnce == false else { return }
+        replayOnce = true
+        typealias RefreshFn = @convention(c) (UnsafePointer<CChar>?) -> Void
+        // RTLD_DEFAULT first, then the bootstrap by name. The fallback is the
+        // one that actually fires: RTLD_DEFAULT searches only the global group,
+        // and System.loadLibrary puts libNucleantMain.so in the app's
+        // classloader namespace without adding it there, so this library — which
+        // Python dlopened into its own namespace — cannot see it that way.
+        // dlopen on an already-loaded library returns its existing handle rather
+        // than mapping a second copy.
+        let rtldDefault = UnsafeMutableRawPointer(bitPattern: 0)  // RTLD_DEFAULT
+        var sym = dlsym(rtldDefault, "nucleant_refresh_host_hooks")
+        if sym == nil, let handle = dlopen("libNucleantMain.so", RTLD_NOW) {
+            sym = dlsym(handle, "nucleant_refresh_host_hooks")
+        }
+        guard let sym else {
+            NSLog("[nucleant] bootstrap exports no nucleant_refresh_host_hooks — "
+                  + "a surface created before this library loaded stays lost")
+            return
+        }
+        // Hand over this library's own path so the bootstrap can dlopen it for
+        // a handle: the barrier is symmetric, and its RTLD_DEFAULT cannot see
+        // our @_cdecl hooks any more than ours could see its refresh symbol.
+        // dladdr against a symbol in this module reports the file it came from.
+        var info = Dl_info()
+        let selfAddress = unsafeBitCast(
+            nucleant_android_surface_created as @convention(c) (OpaquePointer?, Int32, Int32) -> Void,
+            to: UnsafeMutableRawPointer.self
+        )
+        let path: UnsafePointer<CChar>? =
+            dladdr(selfAddress, &info) != 0 ? info.dli_fname : nil
+        if path == nil {
+            NSLog("[nucleant] dladdr could not name this library — the bootstrap "
+                  + "will fall back to RTLD_DEFAULT and keep dropping events")
+        }
+        unsafeBitCast(sym, to: RefreshFn.self)(path)
+    }
+
+    private nonisolated(unsafe) static var replayOnce = false
+
+    /// Tells the bootstrap a frame has reached the surface, so the Activity can
+    /// take its presplash down. Reached the same way as `replayFromBootstrap`,
+    /// and equally optional: an older bootstrap without the symbol just keeps
+    /// its presplash up, which is what it did before this existed.
+    static func signalFirstFrame() {
+        typealias FirstFrameFn = @convention(c) () -> Void
+        let rtldDefault = UnsafeMutableRawPointer(bitPattern: 0)  // RTLD_DEFAULT
+        var sym = dlsym(rtldDefault, "nucleant_android_first_frame")
+        if sym == nil, let handle = dlopen("libNucleantMain.so", RTLD_NOW) {
+            sym = dlsym(handle, "nucleant_android_first_frame")
+        }
+        guard let sym else { return }
+        unsafeBitCast(sym, to: FirstFrameFn.self)()
     }
 }
 
