@@ -94,6 +94,13 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
     /// Touch ids arrive already assigned by the Java side (MotionEvent pointer
     /// ids), so unlike iOS there is no mapping table to keep.
 
+    /// The window `renderEngine` was last built from. `nucleant_android_surface_resized`
+    /// (unlike `_created`) always re-delivers the same pointer it already had,
+    /// so comparing against this tells a plain resize (rotation) apart from a
+    /// genuinely new surface (minimize/resume tearing the old one down) —
+    /// see AndroidSurfaceHost.swift's two `@_cdecl` hooks.
+    private var currentWindow: OpaquePointer?
+
     public init() {
         AndroidSurfaceHost.onSurfaceChanged = { [weak self] window, w, h in
             self?.surfaceChanged(window, w, h)
@@ -135,32 +142,67 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
         // so it overrides whatever the window was constructed with.
         win_delegate?.win_rect = SIMD4<Int>(0, 0, w, h)
 
-        // A resize means a new swapchain. Tearing the engine down and building
-        // a fresh one is the same thing the surfaceDestroyed path does, and
-        // avoids having to thread a resize through every render node.
-        win_delegate?.renderEngine = nil
-        do {
-            win_delegate?.renderEngine = try VulkanRenderEngine(
-                androidWindow: window,
-                getSize: {
-                    let (_, cw, ch) = AndroidSurfaceHost.currentSurface()
-                    return (cw, ch)
-                }
-            )
-        } catch {
-            NSLog("[nucleant] failed to create Vulkan engine: \(error)")
-            return
+        if window != currentWindow || win_delegate?.renderEngine == nil {
+            // A genuinely new native window — the old VkSurfaceKHR (if any) was
+            // built from a window that's no longer valid, so it must be rebuilt
+            // from scratch. This is the minimize/resume case: the Surface gets
+            // destroyed and a new one created, which the render-node tree bound
+            // into the old engine doesn't survive — on_surface_recreated tells
+            // the delegate to rebind it.
+            currentWindow = window
+            // Kept alive through the retarget below via withExtendedLifetime,
+            // not dropped before the new engine exists: a ThorVG canvas
+            // retargeted by on_surface_recreated() needs its old wgpu target
+            // to still be alive at the moment it retargets onto the new one
+            // (tvg_wgcanvas_set_target on a canvas whose target was already
+            // destroyed fails with TVG_RESULT_INSUFFICIENT_CONDITION — ThorVG
+            // has no API to detach a canvas from a target that's gone). Same
+            // ordering resizeThorNode already uses in-place: build the new
+            // target, retarget onto it, only then let the old one be
+            // destroyed.
+            let oldEngine = win_delegate?.renderEngine
+            do {
+                win_delegate?.renderEngine = try VulkanRenderEngine(
+                    androidWindow: window,
+                    getSize: {
+                        let (_, cw, ch) = AndroidSurfaceHost.currentSurface()
+                        return (cw, ch)
+                    }
+                )
+            } catch {
+                NSLog("[nucleant] failed to create Vulkan engine: \(error)")
+                return
+            }
+            win_delegate?.on_size(w: Double(w), h: Double(h))
+            win_delegate?.on_surface_recreated()
+            withExtendedLifetime(oldEngine) {}
+        } else {
+            // Same window, new size — e.g. a rotation that didn't tear the
+            // Surface down. The engine is still valid; on_size re-lays the
+            // existing tree and ensureSwapchain picks up the new drawable size
+            // on the next drawFrame, same as every other platform.
+            win_delegate?.on_size(w: Double(w), h: Double(h))
         }
-        win_delegate?.on_size(w: Double(w), h: Double(h))
         startRenderLoop()
     }
 
     /// Must not return until the renderer has let go of the window — the
     /// Surface is only valid until the Java-side callback returns, and the
-    /// bootstrap blocks on this.
+    /// bootstrap blocks on this. Stopping the render loop is what "letting go"
+    /// requires (no more frames drawn against the dying surface); the engine
+    /// itself is deliberately *not* torn down here. It stays alive — its
+    /// VkSurfaceKHR/swapchain simply go unused — until surfaceChanged's next
+    /// genuinely-new-window rebuild has retargeted every ThorVG canvas onto
+    /// the replacement engine (on_surface_recreated) and released this one
+    /// itself (see the withExtendedLifetime there). Clearing renderEngine
+    /// here would destroy those canvases' wgpu targets before ThorVG has any
+    /// chance to detach from them — there is no API to detach a canvas from a
+    /// target that's already gone, so retargeting afterwards fails with
+    /// TVG_RESULT_INSUFFICIENT_CONDITION. If the surface never comes back
+    /// (app closed, not resumed), this engine is reclaimed along with
+    /// everything else when the process dies, same as always.
     private func surfaceDestroyed() {
         stopRenderLoop()
-        win_delegate?.renderEngine = nil
     }
 
     // MARK: - Frame loop

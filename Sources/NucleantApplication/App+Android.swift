@@ -22,9 +22,15 @@ extension NucleantApplication {
     /// Unlike every other platform this does *not* block. The Activity owns
     /// the UI thread and the main looper, and the render loop belongs to
     /// `PlatformWindow` (started when a surface appears, stopped when it goes
-    /// away) — so there is no event loop here to hand the calling thread to.
-    /// The interpreter thread the bootstrap started is what keeps Python
-    /// alive, and it returning is what ends the app.
+    /// away) — so there is no event loop here to hand the calling thread to,
+    /// and this being a plain `@PyMethod` call means the interpreter's GIL is
+    /// held for as long as it runs, which a render thread on its own OS
+    /// thread needs periodically to call back into Python. Blocking here
+    /// would starve it. Keeping the app alive past this point — until the
+    /// Activity's real `onDestroy()` — is therefore the bootstrap's job
+    /// (`NucleantLauncher.run`, which is not a Python call and can release
+    /// the GIL around a wait the way an embedder normally would), not
+    /// `run()`'s.
     public func run() throws {
         guard let appDelegate else { return }
         appDelegate.run()
