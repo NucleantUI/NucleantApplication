@@ -26,11 +26,6 @@ let env = ProcessInfo.processInfo.environment
 let PSK_DEVELOPMENT = env["PSK_DEVELOPMENT"] == "1"
 let PIP_MODE = env["PIP_MODE"] == "1"
 
-let env = ProcessInfo.processInfo.environment
-
-let PSK_DEVELOPMENT = env["PSK_DEVELOPMENT"] == "1"
-let PIP_MODE = env["PIP_MODE"] == "1"
-
 func getDependencies() -> [Package.Dependency] {
     if devMode {
         return [
