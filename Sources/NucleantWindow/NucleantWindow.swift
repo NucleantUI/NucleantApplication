@@ -14,10 +14,20 @@ public protocol NucleantWindow: AnyObject {
     
     
     func present() throws
-    
+
     func onFrame(_ dt: Double)
     //func on_frame(dt: Double)
     func on_size(w: Double, h: Double)
+
+    /// Android only: the platform layer has just rebuilt `renderEngine` from
+    /// scratch against a genuinely new native window — as opposed to the
+    /// existing window merely changing size — because the old one is no
+    /// longer valid (e.g. the Activity's Surface was destroyed and recreated
+    /// across a minimize/resume). The fresh engine has an empty node list, so
+    /// conformers must re-bind whatever they last bound into the old one.
+    /// Default is a no-op so platforms that never rebuild the engine under
+    /// them (everywhere but Android) are unaffected.
+    func on_surface_recreated()
 
     func on_mouse_down(x: Double, y: Double)
     func on_mouse_up(x: Double, y: Double)
@@ -47,5 +57,6 @@ public extension NucleantWindow {
     func on_touch_moved(id: Int, x: Double, y: Double) {}
     func on_touch_up(id: Int, x: Double, y: Double) {}
     func on_touch_cancelled(id: Int, x: Double, y: Double) {}
+    func on_surface_recreated() {}
 }
 

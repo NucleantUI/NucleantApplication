@@ -90,7 +90,7 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     }
     
     public override func mouseUp(with event: NSEvent) {
-        win_delegate?.mouseDown(location: event.locationInWindow)
+        win_delegate?.mouseUp(location: event.locationInWindow)
     }
     
     public override func mouseDragged(with event: NSEvent) {
@@ -106,11 +106,24 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     }
     
     public override func rightMouseUp(with event: NSEvent) {
-        win_delegate?.rightMouseDown(location: event.locationInWindow)
+        win_delegate?.rightMouseUp(location: event.locationInWindow)
     }
     
     public override func scrollWheel(with event: NSEvent) {
-        win_delegate?.scrollWheel(deltaX: event.deltaX, deltaY: event.deltaY)
+        // `deltaX/Y` are the *legacy line-based* deltas. A trackpad or Magic
+        // Mouse sets `hasPreciseScrollingDeltas`, and for those `deltaY`
+        // reports a fraction of a line — a whole two-finger drag adds up to a
+        // few points, which reads as a scroll view that barely moves.
+        //
+        // `scrollingDeltaX/Y` is the value those devices actually report: in
+        // points when the deltas are precise, in lines otherwise. So use it,
+        // and convert lines to points for a classic wheel.
+        let pointsPerLine = 16.0
+        let scale = event.hasPreciseScrollingDeltas ? 1.0 : pointsPerLine
+        win_delegate?.scrollWheel(
+            deltaX: Double(event.scrollingDeltaX) * scale,
+            deltaY: Double(event.scrollingDeltaY) * scale
+        )
     }
     
     public override func keyDown(with event: NSEvent) {
