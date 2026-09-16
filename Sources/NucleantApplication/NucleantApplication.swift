@@ -21,3 +21,21 @@ public protocol NucleantApplication: AnyObject {
     var appDelegate: AppDelegate<Self>? { get set }
     #endif
 }
+
+#if os(macOS) || os(iOS) || os(Linux) || os(Android)
+extension NucleantApplication {
+    /// Put `commands` up as the app's menu bar, replacing what was there.
+    /// Call from `onStart()` or later — the delegate exists from `setup()`,
+    /// but a menu bar wants an application to hang off. On a platform with
+    /// no menu bar this accepts the commands and shows nothing.
+    public func installCommands(_ commands: some WindowCommands) {
+        appDelegate?.menuBarHost.install(commands.menuBar)
+    }
+
+    /// Rebuild the menu bar from the installed `MenuBar` after editing its
+    /// menus or commands in place.
+    public func refreshCommands() {
+        appDelegate?.menuBarHost.refresh()
+    }
+}
+#endif

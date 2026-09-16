@@ -6,6 +6,7 @@
 #if os(iOS)
 import UIKit
 import NucleantWindow
+import Platform_iOS
 
 /// The `UIWindowScene` the app's window(s) should attach to. Set by the
 /// app's scene delegate (`scene(_:willConnectTo:options:)`) before it
@@ -36,6 +37,8 @@ public final class AppDelegate<App: NucleantApplication>: UIResponder, UIApplica
 
     public var window: UIWindow?
 
+    public var menuBarHost: UIKitMenuBar { .shared }
+
     public init(app: App) {
         self.app = app
         super.init()
@@ -52,6 +55,11 @@ public final class AppDelegate<App: NucleantApplication>: UIResponder, UIApplica
     ) -> Bool {
         app?.onStart()
         return true
+    }
+
+    public override func buildMenu(with builder: any UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        UIKitMenuBar.shared.build(with: builder)
     }
 }
 #endif

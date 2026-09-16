@@ -47,6 +47,9 @@ public final class AppDelegate<App: NucleantApplication> {
 
     weak var app: App?
 
+    /// Neither Wayland nor X11 has a menu bar to fill.
+    public let menuBarHost = NoMenuBar()
+
     public init(app: App) {
         self.app = app
     }

@@ -45,6 +45,9 @@ public final class AppDelegate<App: NucleantApplication> {
 
     weak var app: App?
 
+    /// An Activity has no menu bar.
+    public let menuBarHost = NoMenuBar()
+
     public init(app: App) {
         self.app = app
     }

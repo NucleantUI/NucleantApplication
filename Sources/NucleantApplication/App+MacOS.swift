@@ -30,9 +30,13 @@ extension NucleantApplication {
 public final class AppDelegate<App: NucleantApplication>: NSObject, NSApplicationDelegate {
     
     weak var app: App?
+
+    public let menuBarHost: AppKitMenuBar
     
+    @MainActor
     public init(app: App) {
         self.app = app
+        self.menuBarHost = AppKitMenuBar()
         super.init()
     }
     
