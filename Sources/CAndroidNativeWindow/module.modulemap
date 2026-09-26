@@ -1,0 +1,5 @@
+module CAndroidNativeWindow [system] {
+    header "shim.h"
+    link "android"
+    export *
+}

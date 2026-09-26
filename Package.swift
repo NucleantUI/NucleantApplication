@@ -26,15 +26,31 @@ let env = ProcessInfo.processInfo.environment
 let PSK_DEVELOPMENT = env["PSK_DEVELOPMENT"] == "1"
 let PIP_MODE = env["PIP_MODE"] == "1"
 
+// swift-java, for the Android surface handoff only — `Platform_Android` takes the
+// Activity's `android.view.Surface` as a `JavaObject`, which is what carries the
+// JNIEnv/jobject pair `ANativeWindow_fromSurface` needs.
+//
+// Pinned rather than floored: 0.1.2 introduced the `SwiftJava` product name but
+// does not compile on Swift 6.3.3, and it needs swift-syntax 603 — so a package
+// in the graph pinning swift-syntax `exact:` to 602 resolves swift-java back down
+// to 0.1.2 and reintroduces that failure. ksproject asks for the same version in
+// the app's generated manifest; the two have to agree.
+//
+// Only the runtime product is used here. jextract — the part that wants a JDK —
+// stays in the app's package, because it reads syntax and so only sees the
+// `public func`s in the target its plugin is attached to.
+let SWIFT_JAVA_VERSION: Version = "0.4.2"
+
 func getDependencies() -> [Package.Dependency] {
-    if devMode {
-        return [
-            .package(path: "../NucleantVulkan")
-        ]
+    var deps: [Package.Dependency] = devMode
+        ? [.package(path: "../NucleantVulkan")]
+        : [.package(url: "https://github.com/NucleantUI/NucleantVulkan", branch: "master")]
+    if isAndroid {
+        deps.append(
+            .package(url: "https://github.com/swiftlang/swift-java", from: SWIFT_JAVA_VERSION)
+        )
     }
-    return [
-        .package(url: "https://github.com/NucleantUI/NucleantVulkan", branch: "master"),
-    ]
+    return deps
 }
 
 // The Linux window/app provider (Platform_Linux + its CWayland C module) is
@@ -74,6 +90,7 @@ func pipProductTargets() -> [String] {
     }
     if isAndroid {
         targets.append("Platform_Android")
+        targets.append("NucleantBridge")
     }
     return targets
 }
@@ -88,6 +105,7 @@ func platformProducts() -> [Product] {
     }
     if isAndroid {
         products.append(.library(name: "Platform_Android", type: .static, targets: ["Platform_Android"]))
+        products.append(.library(name: "NucleantBridge", type: .static, targets: ["NucleantBridge"]))
     }
     return products
 }
@@ -197,16 +215,46 @@ func platformTargets() -> [Target] {
         ])
     }
     if isAndroid {
-        // No C shim of its own: the ANativeWindow handle arrives from the
-        // bootstrap through a C ABI, and Vulkan's Android surface extension is
-        // reached through NucleantVulkan's CVulkan (the NDK provides both).
         targets.append(.systemLibrary(name: "CAndroidChoreographer"))
+        // android/native_window_jni.h. `ANativeWindow_fromSurface` is the only
+        // way from an `android.view.Surface` to the handle
+        // VK_KHR_android_surface needs, and it has no Java-side equivalent — so
+        // the surface handoff cannot go through swift-java the way the rest of
+        // the Java edge does. Headers only, from the Swift Android SDK's
+        // sysroot, with libandroid linked by the module map.
+        //
+        // It lives here rather than in the app's generated package because the
+        // code that uses it does: AndroidSurfaceBridge is the other half of
+        // AndroidSurfaceHost, and splitting the two across modules is what
+        // forced them to meet over a dlsym'd C ABI.
+        targets.append(.systemLibrary(name: "CAndroidNativeWindow"))
+        // The Java edge: surface, input and lifecycle, as `public func`s that
+        // jextract turns into `org.nucleantui.NucleantBridge`.
+        //
+        // A module of its own rather than more functions in Platform_Android,
+        // because the plugin generates Java for *everything* public in the
+        // target it is attached to — this way exactly the intended surface
+        // crosses, and Platform_Android stays a plain Swift module.
+        targets.append(
+            .target(
+                name: "NucleantBridge",
+                dependencies: [
+                    "Platform_Android",
+                    .product(name: "SwiftJava", package: "swift-java")
+                ],
+                plugins: [
+                    .plugin(name: "JExtractSwiftPlugin", package: "swift-java")
+                ]
+            )
+        )
         targets.append(
             .target(
                 name: "Platform_Android",
                 dependencies: [
                     "NucleantWindow",
                     "CAndroidChoreographer",
+                    "CAndroidNativeWindow",
+                    .product(name: "SwiftJava", package: "swift-java"),
                     .product(name: "NucleantVulkan", package: "NucleantVulkan"),
                     .product(name: "VulkanCore", package: "NucleantVulkan")
                 ]

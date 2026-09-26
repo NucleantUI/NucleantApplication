@@ -3,55 +3,10 @@
 //  NucleantApplication
 //
 #if os(Android)
-import CAndroidChoreographer
 import Foundation
 import NucleantWindow
 import NucleantVulkan
 import VulkanCore
-
-/// What the Choreographer callbacks are handed, instead of the window itself.
-///
-/// A C function pointer cannot be formed from a closure that mentions a generic
-/// parameter, and `PlatformWindow` is generic over its delegate — so the window
-/// passes these two erased closures and the callbacks never name its type.
-private final class FrameTarget {
-    let tick: () -> Void
-    let isRunning: () -> Bool
-
-    init(tick: @escaping () -> Void, isRunning: @escaping () -> Bool) {
-        self.tick = tick
-        self.isRunning = isRunning
-    }
-}
-
-/// Steady state: draw this frame, then ask for the next vsync.
-private func postFrameCallback(_ context: UnsafeMutableRawPointer) {
-    guard let choreographer = AChoreographer_getInstance() else { return }
-    AChoreographer_postFrameCallback(choreographer, { _, data in
-        guard let data else { return }
-        let target = Unmanaged<FrameTarget>.fromOpaque(data).takeUnretainedValue()
-        guard target.isRunning() else { return }
-        target.tick()
-        postFrameCallback(data)
-    }, context)
-}
-
-/// The first frame only: draw, tell the Activity it can drop the presplash,
-/// then hand over to the steady-state callback. Separate so the signal costs
-/// one call at startup rather than a test on every frame.
-private func postFirstFrameCallback(_ context: UnsafeMutableRawPointer) {
-    guard let choreographer = AChoreographer_getInstance() else { return }
-    AChoreographer_postFrameCallback(choreographer, { _, data in
-        guard let data else { return }
-        let target = Unmanaged<FrameTarget>.fromOpaque(data).takeUnretainedValue()
-        guard target.isRunning() else { return }
-        target.tick()
-        // After the frame, not before: signalling first uncovers an unpainted
-        // surface.
-        AndroidSurfaceHost.signalFirstFrame()
-        postFrameCallback(data)
-    }, context)
-}
 
 /// The Android counterpart of the macOS/iOS/Linux `PlatformWindow`.
 ///
@@ -82,24 +37,24 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
     /// so the window does not retain its delegate.
     public weak var win_delegate: WindowBase?
 
-    /// Frame pacing. A thread of our own, driven by AChoreographer's vsync
-    /// callback — started when a surface exists, stopped when it goes away.
-    private var renderThread: Thread?
-    /// The render thread's Looper, so stop() can wake it out of ALooper_pollOnce.
-    private var looper: OpaquePointer?
-    private var frameTarget: FrameTarget?
+    /// Whether frames from the Activity should be drawn. Set when a surface
+    /// exists and the Activity is resumed; cleared when either goes away.
     private var running = false
     private let runLock = NSLock()
 
     /// Touch ids arrive already assigned by the Java side (MotionEvent pointer
     /// ids), so unlike iOS there is no mapping table to keep.
 
-    /// The window `renderEngine` was last built from. `nucleant_android_surface_resized`
-    /// (unlike `_created`) always re-delivers the same pointer it already had,
-    /// so comparing against this tells a plain resize (rotation) apart from a
-    /// genuinely new surface (minimize/resume tearing the old one down) —
-    /// see AndroidSurfaceHost.swift's two `@_cdecl` hooks.
+    /// The window `renderEngine` was last built from.
+    /// `AndroidSurfaceHost.surfaceResized` (unlike `surfaceCreated`) always
+    /// re-delivers the same pointer it already had, so comparing against this
+    /// tells a plain resize (rotation) apart from a genuinely new surface
+    /// (minimize/resume tearing the old one down).
     private var currentWindow: OpaquePointer?
+
+    /// When the last frame was drawn, by either source — the Choreographer
+    /// callback or the poll-timeout fallback. Read and written only on the
+    /// render thread.
 
     public init() {
         AndroidSurfaceHost.onSurfaceChanged = { [weak self] window, w, h in
@@ -117,17 +72,21 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
         AndroidSurfaceHost.onActiveChanged = { [weak self] active in
             active ? self?.startRenderLoop() : self?.stopRenderLoop()
         }
+        AndroidSurfaceHost.onFrame = { [weak self] dt in
+            guard let self, self.isRunning else { return }
+            self.tick(dt)
+        }
     }
 
-    /// Attach to the surface that already exists, if any. The Activity creates
-    /// its surface before Python is started, so by the time a window calls
-    /// `present()` there is normally one waiting.
+    /// Attach to the surface that already exists, if any.
+    ///
+    /// The Activity creates its surface before it enters Swift at all, so by the
+    /// time a window calls `present()` there is one waiting — recorded by
+    /// `AndroidSurfaceHost.surfaceCreated`, which the bridge in this same module
+    /// called on the way through. It used to need a replay: the bridge lived in
+    /// the app's own library and this one was loaded later by Python, so the
+    /// create event fired before anything here could record it.
     public func present() {
-        // "Normally one waiting" only holds once the bootstrap has been asked
-        // to replay it: the create event fired long before this library was
-        // loaded, so nothing recorded it here. See replayFromBootstrap().
-        AndroidSurfaceHost.replayFromBootstrap()
-
         let (window, w, h) = AndroidSurfaceHost.currentSurface()
         if window != nil {
             surfaceChanged(window, w, h)
@@ -173,7 +132,10 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
                 NSLog("[nucleant] failed to create Vulkan engine: \(error)")
                 return
             }
-            win_delegate?.on_size(w: Double(w), h: Double(h))
+            win_delegate?.on_size(
+                w: Double(w) / AndroidSurfaceHost.displayScale,
+                h: Double(h) / AndroidSurfaceHost.displayScale
+            )
             win_delegate?.on_surface_recreated()
             withExtendedLifetime(oldEngine) {}
         } else {
@@ -181,9 +143,49 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
             // Surface down. The engine is still valid; on_size re-lays the
             // existing tree and ensureSwapchain picks up the new drawable size
             // on the next drawFrame, same as every other platform.
-            win_delegate?.on_size(w: Double(w), h: Double(h))
+            //
+            // Points, not pixels: the surface reports pixels and `on_size`
+            // multiplies by the display scale to get back to them. Passing
+            // pixels here asks for a drawable `scale` times too large, which
+            // the GPU refuses outright once the scale is not 1.
+            win_delegate?.on_size(
+                w: Double(w) / AndroidSurfaceHost.displayScale,
+                h: Double(h) / AndroidSurfaceHost.displayScale
+            )
         }
         startRenderLoop()
+    }
+
+    /// Must not return until the renderer has let go of the window — the
+    /// Surface is only valid until the Java-side callback returns, and the
+    /// bootstrap blocks on this. Stopping the render loop is what "letting go"
+    /// requires (no more frames drawn against the dying surface); the engine
+    /// itself is deliberately *not* torn down here. It stays alive — its
+    /// VkSurfaceKHR/swapchain simply go unused — until surfaceChanged's next
+    /// genuinely-new-window rebuild has retargeted every ThorVG canvas onto
+    /// the replacement engine (on_surface_recreated) and released this one
+    /// itself (see the withExtendedLifetime there). Clearing renderEngine
+    /// here would destroy those canvases' wgpu targets before ThorVG has any
+    /// chance to detach from them — there is no API to detach a canvas from a
+    /// target that's already gone, so retargeting afterwards fails with
+    /// TVG_RESULT_INSUFFICIENT_CONDITION. If the surface never comes back
+    /// (app closed, not resumed), this engine is reclaimed along with
+    /// everything else when the process dies, same as always.
+
+    // MARK: - Frame loop
+
+    /// Frames come from the Activity now, so there is nothing to start.
+    ///
+    /// This used to spawn a thread with its own ALooper and AChoreographer,
+    /// because the renderer lived in a library Python loaded later and could
+    /// not be driven from the interpreter thread. With the app compiled into
+    /// one binary and the Activity owning the process, the Activity's own
+    /// Choreographer is the frame source — the ordinary Android arrangement —
+    /// and `active` is only a flag deciding whether those frames are drawn.
+    private func startRenderLoop() {
+        runLock.lock()
+        running = true
+        runLock.unlock()
     }
 
     /// Must not return until the renderer has let go of the window — the
@@ -207,67 +209,12 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
 
     // MARK: - Frame loop
 
-    private func startRenderLoop() {
-        runLock.lock()
-        defer { runLock.unlock() }
-        guard !running else { return }
-        running = true
-        let thread = Thread { [weak self] in
-            guard let self else { return }
-            // Vsync, not a spin: AChoreographer is Android's CADisplayLink, and
-            // the frame callback arrives on the display's cadence. It delivers
-            // through a Looper and needs one on the calling thread, so prepare
-            // one here and pump it — the callbacks re-post themselves, so this
-            // thread sleeps in ALooper_pollOnce between frames instead of
-            // burning a core and drifting out of phase with the display.
-            //
-            // Not @MainActor / assumeIsolated anywhere in here: that check traps
-            // with SIGILL off the main thread, and Java's Looper owns the main
-            // thread so there is nothing to hop to. `running` is guarded by
-            // runLock and the delegate belongs to the window, the same
-            // arrangement Platform_Linux uses.
-            guard ALooper_prepare(0) != nil,
-                  let choreographer = AChoreographer_getInstance()
-            else {
-                NSLog("[nucleant] no Choreographer on the render thread — no frames")
-                return
-            }
-
-            self.looper = ALooper_forThread()
-
-            // Held by the window so the pointer handed to C stays valid; the
-            // closures hold the window weakly, so neither keeps the other alive.
-            let target = FrameTarget(
-                tick:      { [weak self] in self?.tick() },
-                isRunning: { [weak self] in self?.isRunning ?? false }
-            )
-            self.frameTarget = target
-            postFirstFrameCallback(Unmanaged.passUnretained(target).toOpaque())
-
-            while self.isRunning {
-                // -1: block until a callback or an ALooper_wake from stop().
-                _ = ALooper_pollOnce(-1, nil, nil, nil)
-            }
-        }
-        thread.name = "nucleant-render"
-        renderThread = thread
-        thread.start()
-    }
-
+    /// Stop drawing. The Activity keeps posting frames; `running` decides
+    /// whether they do anything, so a backgrounded app costs one branch.
     private func stopRenderLoop() {
         runLock.lock()
         running = false
-        let looper = self.looper
         runLock.unlock()
-        // The render thread is blocked in ALooper_pollOnce with no timeout, so
-        // clearing `running` alone would never be noticed — wake it so it can
-        // re-check and fall out of the loop.
-        if let looper { ALooper_wake(looper) }
-        // Join: the surface must not be released while a frame is in flight.
-        while renderThread?.isFinished == false {
-            Thread.sleep(forTimeInterval: 0.001)
-        }
-        renderThread = nil
     }
 
     private var isRunning: Bool {
@@ -276,13 +223,17 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
         return running
     }
 
-    private var lastFrame = Date().timeIntervalSince1970
-
-    private func tick() {
-        let now = Date().timeIntervalSince1970
-        let dt = now - lastFrame
-        lastFrame = now
+    /// Draw one frame.
+    ///
+    /// `dt` comes from the Activity's Choreographer callback — the display's
+    /// own vsync timestamps — rather than being derived from a wall clock
+    /// here, so the renderer advances on the same clock the frames arrive on.
+    private func tick(_ dt: Double) {
         win_delegate?.onFrame(dt)
+        // The Activity polls for this to take its presplash down. Marked after
+        // the frame rather than before, so what it reports is a frame that has
+        // actually reached the surface.
+        AndroidSurfaceHost.markFirstFrame()
     }
 
     // MARK: - Input
