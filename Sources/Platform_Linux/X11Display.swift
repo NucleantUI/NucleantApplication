@@ -156,6 +156,15 @@ public final class X11Display {
 
     private static let pollTimeoutMilliseconds: Int32 = 8
 
+    /// How far one wheel notch scrolls, in points.
+    ///
+    /// Three lines at the 16 points per line `Platform_MacOS` converts a
+    /// classic wheel with — the desktop convention here, shared by GTK, Qt and
+    /// Firefox. macOS's own one-line notch is a deliberate difference: it is
+    /// tuned for trackpads that report continuous deltas, and on a mouse next
+    /// to other Linux windows it reads as a scroll view that barely moves.
+    private static let pointsPerWheelClick = 3.0 * 16.0
+
     public func pumpEvents(timeoutMilliseconds: Int32 = 0) {
         guard let connection = connectionHandle, !isTerminated else { return }
 
@@ -269,10 +278,19 @@ public final class X11Display {
             pressed ? handler.waylandPointerDown(at: location) : handler.waylandPointerUp(at: location)
         case 3: // right
             pressed ? handler.waylandRightPointerDown(at: location) : handler.waylandRightPointerUp(at: location)
-        case 4: // scroll up
-            if pressed { handler.waylandScrolled(dx: 0, dy: -1) }
-        case 5: // scroll down
-            if pressed { handler.waylandScrolled(dx: 0, dy: 1) }
+        // X11 has no scroll event: a wheel is reported as presses of buttons
+        // 4-7, carrying a direction and nothing else, so the distance is ours
+        // to supply. `on_scroll` is in points and specified against AppKit,
+        // where positive is a scroll *up* — the opposite of the button order
+        // here, which is why these were going the wrong way.
+        case 4: // wheel up
+            if pressed { handler.waylandScrolled(dx: 0, dy: Self.pointsPerWheelClick) }
+        case 5: // wheel down
+            if pressed { handler.waylandScrolled(dx: 0, dy: -Self.pointsPerWheelClick) }
+        case 6: // wheel left
+            if pressed { handler.waylandScrolled(dx: Self.pointsPerWheelClick, dy: 0) }
+        case 7: // wheel right
+            if pressed { handler.waylandScrolled(dx: -Self.pointsPerWheelClick, dy: 0) }
         default:
             break
         }
