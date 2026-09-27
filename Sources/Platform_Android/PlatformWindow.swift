@@ -33,7 +33,7 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
 
     public var on_close: (() -> Void)?
 
-    /// Strongly held by the owner (PyNucleantUI keeps this); referenced weakly
+    /// Strongly held by the owner; referenced weakly
     /// so the window does not retain its delegate.
     public weak var win_delegate: WindowBase?
 

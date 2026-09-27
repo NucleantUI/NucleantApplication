@@ -16,8 +16,7 @@ import NucleantWindow
 /// what `PlatformWindow` calls, and the default forwarding to the
 /// `on_mouse_*` / `on_touch_*` / `on_key_*` hooks lives on `NucleantWindow
 /// where Self: WaylandWindowDelegate` below, so a conformance declared in
-/// another module (e.g. PyNucleantUI's `WindowBase`) picks these up as its
-/// default witnesses.
+/// another module picks these up as its default witnesses.
 ///
 /// Locations are surface-local, in logical points — the same space
 /// `on_size` reports and the same contract as `NSPoint`/`CGPoint` on the

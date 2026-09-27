@@ -18,8 +18,7 @@
 //  whole target, including everything that has no business crossing to Java.
 //
 //  What is *not* here is the app's entry point. `nucleantRunMain` has to build
-//  the app's `NucleantApp` type, which lives above this package in
-//  NucleantSwiftUI, so it is generated into the app's own Swift target and
+//  the app itself, which lives above this package, so it is generated into the app's own Swift target and
 //  reached through `NucleantActivity.startApp`.
 //
 #if os(Android)

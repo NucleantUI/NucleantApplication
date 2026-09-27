@@ -18,7 +18,7 @@ import android.view.WindowManager;
  * Override any of the protected hooks to do more.
  *
  * <p>Startup is three steps. {@code System.loadLibrary} brings in
- * libNucleantMain.so — the app, NucleantSwiftUI and the JNI bridge, linked
+ * libNucleantMain.so — the app, its dependencies and the JNI bridge, linked
  * together by the Main Swift Package. {@link NucleantSurfaceView} hands over an
  * {@code android.view.Surface} as soon as one exists. Then
  * {@code nucleantRunMain} starts the app against it.

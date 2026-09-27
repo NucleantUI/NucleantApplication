@@ -19,7 +19,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
 
     public var on_close: (() -> Void)?
 
-    /// Strongly-held by the owner (PyNucleantUI keeps this); we only reference
+    /// Strongly-held by the owner; we only reference
     /// it weakly so the window doesn't retain its delegate.
     public weak var win_delegate: WindowBase?
 

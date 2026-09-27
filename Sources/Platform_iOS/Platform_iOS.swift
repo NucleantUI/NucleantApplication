@@ -11,8 +11,8 @@ import UIKit
 /// `win_delegate`. Mirrors macOS's `WindowBaseDelegate`: the geometry-typed
 /// methods here are the seam, and the default forwarding to the `on_touch_*` /
 /// `on_key_*` Python-facing hooks lives on `NucleantWindow where Self:
-/// WindowTouchDelegate` so a conformance declared in another module (e.g.
-/// PyNucleantUI's `WindowBase`) picks these up as its default witnesses.
+/// WindowTouchDelegate` so a conformance declared in another module
+/// picks these up as its default witnesses.
 public protocol WindowTouchDelegate: AnyObject {
     func touchDown(id: Int, location: CGPoint)
     func touchMoved(id: Int, location: CGPoint)

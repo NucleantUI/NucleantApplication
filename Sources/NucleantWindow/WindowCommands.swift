@@ -3,8 +3,8 @@
 //  NucleantApplication
 //
 //  The platform-neutral description of an app's menu bar, and the two
-//  protocols on either side of it: `WindowCommands` is what a UI layer
-//  (NucleantSwiftUI, a Python app) provides, `MenuBarHost` is what a platform
+//  protocols on either side of it: `WindowCommands` is what the app's UI layer
+//  provides, `MenuBarHost` is what a platform
 //  provider (Platform_MacOS, Platform_iOS — later Windows, Linux, Android)
 //  turns it into. Neither side sees the other's framework types.
 //

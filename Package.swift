@@ -63,8 +63,8 @@ func getDependencies() -> [Package.Dependency] {
 // "target is Linux": unlike Android there is no cross-compile path into it.
 // Android is always a cross-compile — Package.swift is compiled by the *host*
 // toolchain, so `#if os(Android)` here would describe the host and never be
-// true. It is an explicit env opt-in, the same signal NucleantVulkan, CPython,
-// PySwiftKit and PyNucleantUI all use.
+// true. It is an explicit env opt-in, the same signal NucleantVulkan, CPython
+// and PySwiftKit use.
 let isAndroid = ProcessInfo.processInfo.environment["SWIFT_ANDROID_HOME"] != nil
     || ProcessInfo.processInfo.environment["ANDROID_BUILD"] != nil
 

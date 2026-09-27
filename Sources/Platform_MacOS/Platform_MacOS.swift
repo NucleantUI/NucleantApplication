@@ -21,8 +21,8 @@ public protocol WindowBaseDelegate: AnyObject {
 }
 
 extension NucleantWindow where Self: WindowBaseDelegate {
-    // public so a conformance declared in another module (PyNucleantUI's
-    // WindowBase) can use these as the default witnesses for the public
+    // public so a conformance declared in another module can
+    // use these as the default witnesses for the public
     // WindowBaseDelegate requirements — an internal default impl isn't
     // visible there and the conformance would fail to type-check.
     public func mouseDown(location: NSPoint) {
