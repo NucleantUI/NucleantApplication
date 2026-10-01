@@ -47,6 +47,22 @@ public protocol NucleantWindow: AnyObject {
     func on_touch_moved(id: Int, x: Double, y: Double)
     func on_touch_up(id: Int, x: Double, y: Double)
     func on_touch_cancelled(id: Int, x: Double, y: Double)
+
+    // Trackpad pinch and rotation (macOS). `delta` is the change since the
+    // previous event of the same gesture — a fraction of scale for a pinch,
+    // degrees counterclockwise for a rotation, as AppKit reports them — and
+    // (x, y) is the pointer, in the same space as the mouse callbacks. A
+    // touch host never calls these: its two fingers arrive as touches.
+    func on_magnify(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double)
+    func on_rotate(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double)
+}
+
+/// Where a trackpad gesture is in its life.
+public enum TrackpadGesturePhase: Sendable {
+    case began
+    case changed
+    case ended
+    case cancelled
 }
 
 // Default no-op touch handlers so conformers that don't care about touch (e.g.
@@ -58,5 +74,7 @@ public extension NucleantWindow {
     func on_touch_up(id: Int, x: Double, y: Double) {}
     func on_touch_cancelled(id: Int, x: Double, y: Double) {}
     func on_surface_recreated() {}
+    func on_magnify(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double) {}
+    func on_rotate(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double) {}
 }
 

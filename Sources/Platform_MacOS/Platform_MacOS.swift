@@ -18,6 +18,8 @@ public protocol WindowBaseDelegate: AnyObject {
     func scrollWheel(deltaX: Double, deltaY: Double)
     func keyDown(key: UInt16, chars:  String?)
     func keyUp(key: UInt16, chars:  String?)
+    func magnify(phase: TrackpadGesturePhase, delta: Double, location: NSPoint)
+    func rotate(phase: TrackpadGesturePhase, delta: Double, location: NSPoint)
 }
 
 extension NucleantWindow where Self: WindowBaseDelegate {
@@ -59,6 +61,14 @@ extension NucleantWindow where Self: WindowBaseDelegate {
 
     public func keyUp(key: UInt16, chars: String?) {
         on_key_up(keyCode: key, characters: chars)
+    }
+
+    public func magnify(phase: TrackpadGesturePhase, delta: Double, location: NSPoint) {
+        on_magnify(phase: phase, delta: delta, x: location.x, y: location.y)
+    }
+
+    public func rotate(phase: TrackpadGesturePhase, delta: Double, location: NSPoint) {
+        on_rotate(phase: phase, delta: delta, x: location.x, y: location.y)
     }
     
     
@@ -132,6 +142,26 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     
     public override func keyUp(with event: NSEvent) {
         win_delegate?.keyUp(key: event.keyCode, chars: event.characters)
+    }
+
+    public override func magnify(with event: NSEvent) {
+        guard let phase = Self.trackpadPhase(event.phase) else { return }
+        win_delegate?.magnify(phase: phase, delta: Double(event.magnification), location: event.locationInWindow)
+    }
+
+    public override func rotate(with event: NSEvent) {
+        guard let phase = Self.trackpadPhase(event.phase) else { return }
+        win_delegate?.rotate(phase: phase, delta: Double(event.rotation), location: event.locationInWindow)
+    }
+
+    /// A gesture event's phase, or `nil` for the momentum and "may begin"
+    /// events, which carry no change.
+    private static func trackpadPhase(_ phase: NSEvent.Phase) -> TrackpadGesturePhase? {
+        if phase.contains(.began) { return .began }
+        if phase.contains(.changed) { return .changed }
+        if phase.contains(.ended) { return .ended }
+        if phase.contains(.cancelled) { return .cancelled }
+        return nil
     }
     
     
