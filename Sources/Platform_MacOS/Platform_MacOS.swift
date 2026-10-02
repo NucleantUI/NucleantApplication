@@ -209,8 +209,19 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
         link.add(to: .main, forMode: .common)
     }
 
+    /// The previous tick's display-link timestamp.
+    private var lastTickTimestamp: CFTimeInterval?
+
+    /// Hands the frame the time since the previous tick, from the link's own
+    /// vsync timestamps — so a refresh the app missed is counted in the next
+    /// frame's Δt. `targetTimestamp - timestamp` is one refresh whatever
+    /// happened: time behind a dropped frame never arrived, and everything
+    /// advanced by Δt ran slow whenever frames were missed. The first tick,
+    /// with nothing before it, gets one refresh.
     @objc func cadlTick(_ link: CADisplayLink) {
-        win_delegate?.onFrame(link.targetTimestamp - link.timestamp)
+        let dt = lastTickTimestamp.map { link.timestamp - $0 } ?? (link.targetTimestamp - link.timestamp)
+        lastTickTimestamp = link.timestamp
+        win_delegate?.onFrame(dt)
     }
 }
 #endif

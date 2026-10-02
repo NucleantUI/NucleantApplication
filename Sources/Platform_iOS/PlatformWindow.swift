@@ -102,8 +102,16 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         displayLink = nil
     }
 
+    /// The previous tick's display-link timestamp.
+    private var lastTickTimestamp: CFTimeInterval?
+
+    /// The time since the previous tick, from the link's own vsync
+    /// timestamps — a missed refresh counts in the next frame's Δt, as on
+    /// macOS (`Platform_MacOS.swift`). The first tick gets one refresh.
     @objc private func cadlTick(_ link: CADisplayLink) {
-        win_delegate?.onFrame(link.targetTimestamp - link.timestamp)
+        let dt = lastTickTimestamp.map { link.timestamp - $0 } ?? (link.targetTimestamp - link.timestamp)
+        lastTickTimestamp = link.timestamp
+        win_delegate?.onFrame(dt)
     }
 
     // MARK: - Touch input
