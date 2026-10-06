@@ -84,7 +84,7 @@ let isLinux = false
 /// exists per build. The Apple two are unconditional because their sources are
 /// `#if os(...)`-guarded and so compile to empty modules everywhere else.
 func pipProductTargets() -> [String] {
-    var targets = ["NucleantApplication", "NucleantWindow", "Platform_MacOS", "Platform_iOS"]
+    var targets = ["NucleantApplication", "NucleantWindow", "NucleantSync", "Platform_MacOS", "Platform_iOS"]
     if isLinux {
         targets.append("Platform_Linux")
     }
@@ -141,7 +141,8 @@ func packageProducts() -> [Product] {
             type: .static,
             targets: ["NucleantApplication"]
         ),
-        .library(name: "NucleantWindow", type: .static, targets: ["NucleantWindow"])
+        .library(name: "NucleantWindow", type: .static, targets: ["NucleantWindow"]),
+        .library(name: "NucleantSync", type: .static, targets: ["NucleantSync"])
     ] + platformProducts()
 }
 
@@ -281,6 +282,20 @@ func platformDependencies() -> [Target.Dependency] {
     return deps
 }
 
+/// NucleantSync's per-platform sync sources. Linux has no display-wide vsync
+/// callback, so its handler rides `Platform_Linux`'s event loop; Android's is
+/// the Choreographer shim; Apple platforms need nothing from the package.
+func syncDependencies() -> [Target.Dependency] {
+    var deps: [Target.Dependency] = []
+    if isLinux {
+        deps.append(.byName(name: "Platform_Linux", condition: .when(platforms: [.linux])))
+    }
+    if isAndroid {
+        deps.append(.byName(name: "CAndroidChoreographer", condition: .when(platforms: [.android])))
+    }
+    return deps
+}
+
 let package = Package(
     name: "NucleantApplication",
     platforms: [
@@ -307,6 +322,13 @@ let package = Package(
                 .product(name: "NucleantVulkan", package: "NucleantVulkan"),
                 .product(name: "NucleantShader", package: "NucleantVulkan"),
             ]
+        ),
+        // Display-synced callbacks (DisplaySync). Platform-free dependencies:
+        // each platform's sync source lives in a `SyncCallbackHandler+<OS>.swift`.
+        .target(name: "NucleantSync", dependencies: syncDependencies()),
+        .testTarget(
+            name: "NucleantSyncTests",
+            dependencies: ["NucleantSync"]
         ),
         .testTarget(
             name: "NucleantApplicationTests",

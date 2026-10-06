@@ -298,6 +298,7 @@ public final class WaylandDisplay {
     /// hasn't asked for — see `WaylandSurface.pumpFallbackTick`.
     private func tickSurfaces() {
         let now = waylandMonotonicSeconds()
+        FrameLoopTurn.fire(now: now)
         for (handle, box) in surfaces {
             guard let surface = box.surface else {
                 surfaces.removeValue(forKey: handle)

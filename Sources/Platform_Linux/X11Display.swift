@@ -199,6 +199,7 @@ public final class X11Display {
 
     private func tickWindows() {
         let now = waylandMonotonicSeconds()
+        FrameLoopTurn.fire(now: now)
         for (handle, box) in windows {
             guard let window = box.window else {
                 windows.removeValue(forKey: handle)
