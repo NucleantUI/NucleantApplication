@@ -181,6 +181,27 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     }
     
     
+    /// The content size the zoom button takes the window to, or `nil` for
+    /// AppKit's own answer: as large as the screen allows, within the
+    /// window's maximum size.
+    public var zoomContentSize: NSSize?
+
+    public func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame newFrame: NSRect) -> NSRect {
+        guard let zoomContentSize else { return newFrame }
+        // `newFrame` has already been cut down to the window's maximum size
+        // and moved to the screen's corner, so it is the screen itself that
+        // the zoomed window has to fit on.
+        let bounds = screen?.visibleFrame ?? newFrame
+        var zoomed = frameRect(forContentRect: NSRect(origin: .zero, size: zoomContentSize))
+        // No larger than the screen, and the title bar stays where it is —
+        // as far as staying on the screen allows.
+        zoomed.size.width = min(zoomed.width, bounds.width)
+        zoomed.size.height = min(zoomed.height, bounds.height)
+        zoomed.origin.x = min(max(frame.minX, bounds.minX), bounds.maxX - zoomed.width)
+        zoomed.origin.y = min(max(frame.maxY - zoomed.height, bounds.minY), bounds.maxY - zoomed.height)
+        return zoomed
+    }
+
     public func windowDidMiniaturize(_ notification: Notification) {
         
     }

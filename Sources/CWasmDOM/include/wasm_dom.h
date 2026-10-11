@@ -25,6 +25,11 @@ NWD_IMPORT(windowSetTitle)      void     nwd_window_set_title(uint32_t window, c
 NWD_IMPORT(windowGetMetrics)    void     nwd_window_get_metrics(uint32_t window, double *metrics);
 NWD_IMPORT(windowSetFullscreen) void     nwd_window_set_fullscreen(uint32_t window, uint32_t fullscreen);
 NWD_IMPORT(windowFocus)         void     nwd_window_focus(uint32_t window);
+/// How the canvas is sized: at the size it was created at, or (`fills` 1)
+/// filling its container and following it, which needs a container with a
+/// height of its own. Either way kept within [min, max] CSS pixels; 0 and
+/// Infinity mean no limit. The new size arrives as a resize.
+NWD_IMPORT(windowSetLayout)     void     nwd_window_set_layout(uint32_t window, uint32_t fills, double minWidth, double minHeight, double maxWidth, double maxHeight);
 
 /// A string of the event being delivered: 0 is the key's `code`
 /// ("KeyA", "ArrowLeft"), 1 its `key` ("a", "Enter"). Copies at most

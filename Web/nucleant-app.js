@@ -257,6 +257,8 @@ export class DOMBridge {
         else if (document.fullscreenElement === window.canvas) document.exitFullscreen();
       },
       windowFocus: (id) => this.windows.get(id)?.canvas.focus(),
+      windowSetLayout: (id, fills, minWidth, minHeight, maxWidth, maxHeight) =>
+        this.layoutWindow(id, fills !== 0, minWidth, minHeight, maxWidth, maxHeight),
       eventString: (which, buffer, capacity) => copyOut(this.eventStrings[which] ?? '', buffer, capacity),
       frameLoopStart: () => this.startFrames(),
       frameLoopStop: () => this.stopFrames(),
@@ -373,7 +375,7 @@ export class DOMBridge {
     canvas.tabIndex = 0;
     canvas.title = title;
     Object.assign(canvas.style, { width: `${width}px`, height: `${height}px`, display: 'block', touchAction: 'none', outline: 'none' });
-    const window = { id, canvas, title, cssWidth: width, cssHeight: height, observer: null };
+    const window = { id, canvas, title, width, height, cssWidth: width, cssHeight: height, observer: null };
     this.resizeCanvas(window, width, height, null);
     this.container.appendChild(canvas);
     this.windows.set(id, window);
@@ -396,6 +398,33 @@ export class DOMBridge {
     }
     this.listen(window);
     return id;
+  }
+
+  /**
+   * Sizes the canvas: at the size it was created at, or filling its container
+   * and following it, and either way kept within the limits — CSS pixels,
+   * 0 and Infinity for none. A filling canvas takes its height from the
+   * container, so the container needs one of its own (index.html gives the
+   * page's); `contain: size` keeps the canvas's own drawing buffer, which
+   * follows its displayed size, from feeding back into that size.
+   */
+  layoutWindow(id, fills, minWidth, minHeight, maxWidth, maxHeight) {
+    const window = this.windows.get(id);
+    if (!window) return;
+    const limit = (value, none) => (value > 0 && Number.isFinite(value) ? `${value}px` : none);
+    Object.assign(window.canvas.style, {
+      width: fills ? '100%' : `${window.width}px`,
+      height: fills ? '100%' : `${window.height}px`,
+      contain: fills ? 'size' : '',
+      minWidth: limit(minWidth, '0'),
+      minHeight: limit(minHeight, '0'),
+      maxWidth: limit(maxWidth, 'none'),
+      maxHeight: limit(maxHeight, 'none'),
+    });
+    window.canvas.classList.toggle('nucleant-window-fills', fills);
+    // A filling canvas held to a maximum doesn't reach the container's edges:
+    // the page can set it off the way it would a window.
+    window.canvas.classList.toggle('nucleant-window-bounded', Number.isFinite(maxWidth) || Number.isFinite(maxHeight));
   }
 
   /** Keeps the canvas's drawing buffer at its displayed size in device pixels. */

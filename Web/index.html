@@ -7,11 +7,16 @@
   <style>
     :root { color-scheme: light dark; }
     /* The page follows prefers-color-scheme, as the app inside it does. */
-    html, body { margin: 0; min-height: 100%; background: light-dark(#e2e2e8, #16161a); color: light-dark(#222, #ddd); font: 14px/1.4 system-ui, sans-serif; }
-    #app { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; justify-content: center; align-items: flex-start; }
-    .nucleant-window { max-width: 100%; box-shadow: 0 6px 30px light-dark(rgb(0 0 0 / 0.2), rgb(0 0 0 / 0.45)); }
-    .nucleant-window:focus-visible { outline: 2px solid #6aa0ff; }
-    #status { padding: 0 16px 16px; text-align: center; white-space: pre-wrap; }
+    html, body { margin: 0; height: 100%; background: light-dark(#e2e2e8, #16161a); color: light-dark(#222, #ddd); font: 14px/1.4 system-ui, sans-serif; }
+    /* The browser window is the app's screen: a window fills it and follows
+       it, within the limits the app sets. Smaller than a window's minimum,
+       the page scrolls; larger than its maximum, the window sits centred. */
+    #app { display: flex; flex-wrap: wrap; height: 100dvh; overflow: auto; }
+    .nucleant-window { margin: auto; }
+    .nucleant-window:not(.nucleant-window-fills), .nucleant-window-bounded { box-shadow: 0 6px 30px light-dark(rgb(0 0 0 / 0.2), rgb(0 0 0 / 0.45)); }
+    .nucleant-window:focus-visible { outline: 2px solid #6aa0ff; outline-offset: -2px; }
+    #status { position: fixed; inset: auto 0 0 0; padding: 0 16px 16px; text-align: center; white-space: pre-wrap; }
+    #status:empty { display: none; }
   </style>
 </head>
 <body>

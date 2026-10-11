@@ -74,6 +74,21 @@ public final class PlatformWindow<WindowBase>: BrowserWindowHandler
         window.setFullscreen(fullscreen)
     }
 
+    /// How the canvas is sized on the page. `fillsContainer` false holds it
+    /// at the size it was created at; true lets it fill its container — the
+    /// page, in the app template — and follow it as the browser window
+    /// resizes, the way an iOS window follows its scene. Either way it is kept
+    /// within `minSize` … `maxSize`, in CSS pixels: below the minimum the page
+    /// scrolls, past the maximum the canvas stops growing. Like every resize,
+    /// the new size arrives through `on_size`.
+    public func setLayout(
+        fillsContainer: Bool,
+        minSize: SIMD2<Double> = .zero,
+        maxSize: SIMD2<Double> = SIMD2(repeating: .infinity)
+    ) {
+        window.setLayout(fillsContainer: fillsContainer, minSize: minSize, maxSize: maxSize)
+    }
+
     /// Gives the canvas keyboard focus — the counterpart of
     /// `makeKeyAndOrderFront`. It is on the page from init.
     public func show() {

@@ -124,6 +124,10 @@ final class BrowserWindow {
         nwd_window_focus(id)
     }
 
+    func setLayout(fillsContainer: Bool, minSize: SIMD2<Double>, maxSize: SIMD2<Double>) {
+        nwd_window_set_layout(id, fillsContainer ? 1 : 0, minSize.x, minSize.y, maxSize.x, maxSize.y)
+    }
+
     func destroy() {
         guard !destroyed else { return }
         destroyed = true
