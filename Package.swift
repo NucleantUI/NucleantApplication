@@ -68,12 +68,18 @@ func getDependencies() -> [Package.Dependency] {
 let isAndroid = ProcessInfo.processInfo.environment["SWIFT_ANDROID_HOME"] != nil
     || ProcessInfo.processInfo.environment["ANDROID_BUILD"] != nil
 
+// WebAssembly (`swift build --swift-sdk <version>_wasm`) is a cross-compile
+// from any host, so — like Android — an explicit opt-in, the same one
+// NucleantVulkan reads.
+let isWasm = ProcessInfo.processInfo.environment["WASM_BUILD"] == "1"
+
 #if os(Linux)
 // `&& !isAndroid`: the Android host *is* Linux, and a `.when(platforms:)`
 // condition only gates linking, not whether a target exists — so without this
 // the Linux provider still gets built, and CWayland fails immediately on
-// <wayland-util.h>, which no NDK sysroot has.
-let isLinux = !isAndroid
+// <wayland-util.h>, which no NDK sysroot has. `!isWasm` for the same reason
+// when a Linux host builds for wasm.
+let isLinux = !isAndroid && !isWasm
 #else
 let isLinux = false
 #endif
@@ -106,6 +112,13 @@ func platformProducts() -> [Product] {
     if isAndroid {
         products.append(.library(name: "Platform_Android", type: .static, targets: ["Platform_Android"]))
         products.append(.library(name: "NucleantBridge", type: .static, targets: ["NucleantBridge"]))
+    }
+    if isWasm {
+        products.append(.library(name: "Platform_Wasm", type: .static, targets: ["Platform_Wasm"]))
+        // libdispatch's API for the browser (Sources/DispatchWasm), which the
+        // wasm Swift SDK does not ship: `import Dispatch` in code shared with
+        // the other platforms resolves to it.
+        products.append(.library(name: "Dispatch", type: .static, targets: ["Dispatch"]))
     }
     return products
 }
@@ -262,6 +275,60 @@ func platformTargets() -> [Target] {
             )
         )
     }
+    if isWasm {
+        targets.append(contentsOf: [
+            // The page's side of the window system: imports of the
+            // "nucleant_dom" module, which Web/nucleant-app.js implements.
+            // Declarations only — the stub is there because SwiftPM wants a
+            // source file in a C target.
+            .target(
+                name: "CWasmDOM",
+                path: "Sources/CWasmDOM",
+                sources: ["stub.c"],
+                publicHeadersPath: "include"
+            ),
+            .target(
+                name: "Platform_Wasm",
+                dependencies: [
+                    "NucleantWindow",
+                    "CWasmDOM",
+                    .product(name: "NucleantVulkan", package: "NucleantVulkan"),
+                ]
+            ),
+            // The page's timer and the monotonic clock, for Dispatch below.
+            // Declarations only, like CWasmDOM.
+            .target(
+                name: "CDispatchWasm",
+                path: "Sources/CDispatchWasm",
+                sources: ["stub.c"],
+                publicHeadersPath: "include"
+            ),
+            // libdispatch's queues and times on the page's one thread, under
+            // the name `import Dispatch` looks for — the wasm Swift SDK has
+            // no Dispatch, and Foundation there has no Thread or RunLoop. Its
+            // main queue is serviced by the page (`mainQueueWake`), and
+            // `MainQueueExecutor` makes it Swift concurrency's executor too.
+            .target(
+                name: "Dispatch",
+                dependencies: ["CDispatchWasm"],
+                path: "Sources/DispatchWasm"
+            ),
+            // `scripts/build_wasm_app.py WasmProbe` — one window on the page
+            // with a render engine behind it, logging the input it receives.
+            // The browser's counterpart of WaylandProbe: the smallest thing
+            // that answers "does the window, input and render layer work in
+            // this browser".
+            .executableTarget(
+                name: "WasmProbe",
+                dependencies: [
+                    "NucleantApplication",
+                    "NucleantWindow",
+                    "Platform_Wasm",
+                    .product(name: "NucleantVulkan", package: "NucleantVulkan"),
+                ]
+            ),
+        ])
+    }
     return targets
 }
 
@@ -279,6 +346,12 @@ func platformDependencies() -> [Target.Dependency] {
     if isAndroid {
         deps.append(.byName(name: "Platform_Android", condition: .when(platforms: [.android])))
     }
+    if isWasm {
+        deps.append(.byName(name: "Platform_Wasm", condition: .when(platforms: [.wasi])))
+        // The app lifecycle installs the main queue as Swift concurrency's
+        // executor (App+Wasm.swift).
+        deps.append(.byName(name: "Dispatch", condition: .when(platforms: [.wasi])))
+    }
     return deps
 }
 
@@ -292,6 +365,9 @@ func syncDependencies() -> [Target.Dependency] {
     }
     if isAndroid {
         deps.append(.byName(name: "CAndroidChoreographer", condition: .when(platforms: [.android])))
+    }
+    if isWasm {
+        deps.append(.byName(name: "Platform_Wasm", condition: .when(platforms: [.wasi])))
     }
     return deps
 }
