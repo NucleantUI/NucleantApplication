@@ -63,6 +63,34 @@ struct BrowserPlatformTests {
         #expect(window.canvasSelector == "#nucleant-window-\(window.window.id)")
     }
 
+    @Test func aWindowIsHeldWithinItsLimits() async throws {
+        let window = try PlatformWindow<RecordingWindow>(width: 320, height: 200, title: "limits")
+        defer { window.close() }
+        // The page reports the new size through its ResizeObserver, a turn
+        // later; the sleep is that turn.
+        window.setLayout(fillsContainer: false, minSize: SIMD2(400, 300))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(window.width == 400)
+        #expect(window.height == 300)
+
+        window.setLayout(fillsContainer: false, maxSize: SIMD2(100, 80))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(window.width == 100)
+        #expect(window.height == 80)
+    }
+
+    @Test func aFillingWindowTakesItsContainerUpToItsMaximum() async throws {
+        let window = try PlatformWindow<RecordingWindow>(width: 120, height: 90, title: "fills")
+        defer { window.close() }
+        // The test page's container is as wide as the page, which is wider
+        // than 250, and has no height of its own — the minimum gives it one.
+        window.setLayout(fillsContainer: true, minSize: SIMD2(0, 120), maxSize: SIMD2(250, 120))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(window.width == 250)
+        #expect(window.height == 120)
+        #expect(window.bufferWidth == UInt32((250 * window.scale).rounded()))
+    }
+
     @Test func mouseEventsReachTheDelegateAsMouseCallbacks() throws {
         let (window, delegate) = try openWindow()
         defer { window.close() }
