@@ -13,7 +13,7 @@ public protocol NucleantApplication: AnyObject {
     
     
     
-    #if os(macOS) || os(iOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(iOS) || os(Linux) || os(Android) || os(WASI)
     // Each platform compiles its own `AppDelegate` type (NSApplicationDelegate
     // on macOS, UIApplicationDelegate on iOS, a plain lifecycle object owning
     // the Wayland event loop on Linux) — only one is in scope per build, so
@@ -22,7 +22,7 @@ public protocol NucleantApplication: AnyObject {
     #endif
 }
 
-#if os(macOS) || os(iOS) || os(Linux) || os(Android)
+#if os(macOS) || os(iOS) || os(Linux) || os(Android) || os(WASI)
 extension NucleantApplication {
     /// Put `commands` up as the app's menu bar, replacing what was there.
     /// Call from `onStart()` or later — the delegate exists from `setup()`,
