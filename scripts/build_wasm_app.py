@@ -33,6 +33,15 @@ directory gets:
                           where Foundation reads named zones (see
                           pack_zoneinfo)
 
+--preview (or NUCLEANT_PREVIEW=1 in the environment) builds a NucleantUI app's
+previews instead of the app: every module is compiled with NUCLEANT_PREVIEW
+defined, so `NucleantApp.main()` runs `PreviewRuntime` — the app's `@Preview`
+functions, one tab each — and each `@Preview` leaves the record it reads. The
+build gets its own scratch path, .build/wasm-preview, beside .build/wasm: the
+define changes every module, so sharing one would rebuild everything each
+time you switch between the app and its previews. The page goes to
+.build/wasm-preview-app/<product> unless --output says otherwise.
+
 --serve then serves it on http://127.0.0.1 (WebGPU needs a secure context,
 which localhost is). Open it in a browser with WebGPU — Chrome/Edge 113+,
 Safari 26+, Firefox 141+ (Windows); blocking Vulkan waits additionally use
@@ -106,14 +115,20 @@ def nucleant_vulkan_web(scratch: Path) -> Path:
     sys.exit("error: NucleantVulkan's Web/ directory not found")
 
 
-def build(package: Path, product: str, release: bool) -> Path:
+def build(package: Path, product: str, release: bool, preview: bool = False) -> Path:
     """Builds `product` of `package`; returns the products directory."""
     swift, sdk = find_wasm_sdk()
-    scratch = package / ".build" / "wasm"
+    scratch = package / ".build" / ("wasm-preview" if preview else "wasm")
     configuration = "release" if release else "debug"
     toolset = json.loads(json.dumps(REACTOR_TOOLSET))
     if release:
         toolset["linker"]["extraCLIOptions"].append("--strip-debug")
+    if preview:
+        # Through the toolset, like the reactor flags: it reaches every
+        # module of the wasm build — the app's, so `@Preview` leaves its
+        # records, and NucleantUI's, so `main()` runs the previews — and not
+        # the host build of the macro plugins.
+        toolset["swiftCompiler"]["extraCLIOptions"] += ["-D", "NUCLEANT_PREVIEW"]
     scratch.mkdir(parents=True, exist_ok=True)
     toolset_path = scratch / f"reactor-toolset-{configuration}.json"
     toolset_path.write_text(json.dumps(toolset, indent=2))
@@ -232,11 +247,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="page directory (default .build/wasm-app/<product>)")
     parser.add_argument("--serve", action="store_true", help="serve the page afterwards")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--preview", action="store_true",
+                        help="build the app's @Preview functions instead of the app (also NUCLEANT_PREVIEW=1)")
     args = parser.parse_args(argv)
 
+    preview = args.preview or os.environ.get("NUCLEANT_PREVIEW") == "1"
     package = args.package_path.resolve()
-    products = build(package, args.product, args.release)
-    output = (args.output or package / ".build" / "wasm-app" / args.product).resolve()
+    products = build(package, args.product, args.release, preview)
+    default_output = package / ".build" / ("wasm-preview-app" if preview else "wasm-app") / args.product
+    output = (args.output or default_output).resolve()
     lay_out(args.product, products, output)
     if args.serve:
         serve(output, args.port)
