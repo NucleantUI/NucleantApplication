@@ -490,8 +490,13 @@ export class DOMBridge {
         const pixels = entry.devicePixelContentBoxSize?.[0];
         const cssWidth = box ? box.inlineSize : entry.contentRect.width;
         const cssHeight = box ? box.blockSize : entry.contentRect.height;
-        this.resizeCanvas(window, cssWidth, cssHeight, pixels);
-        this.call('nucleant_window_resized', id);
+        // The drawing buffer changes between calls into the module, never
+        // during one: a frame suspended under JSPI (waiting on the GPU) would
+        // otherwise be handed a canvas texture of the new size after its
+        // swapchain image was acquired at the old one.
+        const resize = () => this.resizeCanvas(window, cssWidth, cssHeight, pixels);
+        if (this.exports.nucleant_window_resized) this.enqueue({ name: 'nucleant_window_resized', args: [id], before: resize });
+        else resize();
       }
     });
     try {
