@@ -41,7 +41,10 @@ const CAPTURED_KEYS = new Set(['Tab', 'Space', 'Backspace', 'ArrowUp', 'ArrowDow
  * Loads and starts the app.
  *
  * @param {object} options
- * @param {string|URL} options.wasm          the app's .wasm
+ * @param {string|URL} options.wasm          the app's .wasm — or, with `app`, the shared module
+ *   the app is linked against. A URL ending in .gz is inflated in the browser.
+ * @param {string|URL} [options.app]         the app as a side module (`wasm-ld -shared`), loaded
+ *   into `wasm` once its constructors have run, whose `main` runs instead (see loadSideModule)
  * @param {HTMLElement} [options.container]  where windows (canvases) go; default document.body
  * @param {string[]} [options.args]          CommandLine.arguments after the program name
  * @param {Object<string,string>} [options.env]
@@ -61,22 +64,122 @@ export async function runNucleantApp(options) {
     jspi: options.jspi,
     onError: options.onError,
   });
-  const name = String(options.wasm).split('/').pop().replace(/\.wasm$/, '');
+  const name = String(options.app ?? options.wasm).split('/').pop().replace(/\.wasm(\.gz)?$/, '');
   const resources = options.resources ? await loadResources(options.resources) : null;
   const zoneinfo = options.zoneinfo ? await loadZoneinfo(options.zoneinfo) : null;
   const env = { ...(resources ? { NUCLEANT_APP_PATH: resources.root } : {}), ...(options.env ?? {}) };
   const wasi = new NucleantWASI({ args: [name, ...(options.args ?? [])], env, jspi: gpu.blockingWaits, files: { ...resources?.files, ...zoneinfo } });
   const dom = new DOMBridge(options.container ?? document.body);
   dom.resources = resources;
-  const response = await fetch(options.wasm);
-  if (!response.ok) throw new Error(`cannot load ${options.wasm} (${response.status})`);
-  const { instance } = await WebAssembly.instantiate(await response.arrayBuffer(), { ...wasi.imports, ...gpu.imports, ...dom.imports });
+  const { instance } = await WebAssembly.instantiate(await fetchModule(options.wasm), { ...wasi.imports, ...gpu.imports, ...dom.imports });
   gpu.attach(instance);
   wasi.attach(instance);
   dom.attach(instance, gpu.blockingWaits);
-  dom.call('_initialize');
+  const initialized = dom.call('_initialize');
+  if (options.app) {
+    // After _initialize: the app's constructors register its Swift
+    // metadata with the shared module's runtime.
+    await initialized;
+    const app = await loadSideModule(instance, options.app);
+    const main = app.exports.__main_argc_argv;
+    dom.exports.__main_argc_argv = gpu.blockingWaits ? WebAssembly.promising(main) : main;
+  }
   await dom.call('__main_argc_argv', 0, 0);
   return { instance, dom, gpu };
+}
+
+/** A module's bytes; a URL ending in .gz is inflated (GitHub Pages serves .wasm uncompressed). */
+async function fetchModule(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`cannot load ${url} (${response.status})`);
+  if (!String(url).endsWith('.gz')) return response.arrayBuffer();
+  return new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+}
+
+/**
+ * Loads an app built as a side module — `wasm-ld -shared`, position
+ * independent, with a `dylink.0` section — into `main`, the module it was
+ * linked against, which exports everything the app imports from it: its
+ * functions by name, its data (GOT.mem) as globals holding addresses, and
+ * its table, stack pointer and `__global_base`.
+ *
+ * The app's data goes at address 0, below main's own (which starts at
+ * `__global_base`): wasm-ld adds `__memory_base` to an already-correct
+ * relative pointer when relocating a side module (R_WASM_MEMORY_ADDR_LOCREL_I32),
+ * which is right only when that base is 0. Its functions go at the end of
+ * main's table. A function either module takes the address of (GOT.func)
+ * gets a table slot.
+ */
+export async function loadSideModule(main, url) {
+  const module = await WebAssembly.compile(await fetchModule(url));
+  const exports = main.exports;
+  const { memorySize, tableSize } = dylinkInfo(module, url);
+  if (memorySize > exports.__global_base.value) {
+    throw new Error(`${url} needs ${memorySize} bytes of data; the shared module leaves ${exports.__global_base.value}`);
+  }
+  const table = exports.__indirect_function_table;
+  const tableBase = table.grow(tableSize);
+  const slots = new Map();
+  const slotOf = (fn) => {
+    if (!slots.has(fn)) slots.set(fn, table.grow(1, fn));
+    return slots.get(fn);
+  };
+  const imports = { env: {}, 'GOT.mem': {}, 'GOT.func': {} };
+  const ownEntries = [];
+  for (const { module: from, name, kind } of WebAssembly.Module.imports(module)) {
+    if (from === 'env') {
+      if (name === 'memory') imports.env.memory = exports.memory;
+      else if (name === '__indirect_function_table') imports.env[name] = table;
+      else if (name === '__stack_pointer') imports.env[name] = exports.__stack_pointer;
+      else if (name === '__memory_base') imports.env[name] = new WebAssembly.Global({ value: 'i32' }, 0);
+      else if (name === '__table_base') imports.env[name] = new WebAssembly.Global({ value: 'i32' }, tableBase);
+      else if (kind === 'function') {
+        if (typeof exports[name] !== 'function') throw new Error(`${url} imports ${name}, which the shared module does not export`);
+        imports.env[name] = exports[name];
+      }
+    } else if (from === 'GOT.mem' || from === 'GOT.func') {
+      const found = exports[name];
+      const address = from === 'GOT.mem'
+        ? (found instanceof WebAssembly.Global ? found.value : 0)
+        : (typeof found === 'function' ? slotOf(found) : 0);
+      const entry = new WebAssembly.Global({ value: 'i32', mutable: true }, address);
+      imports[from][name] = entry;
+      // Not in main: one of the app's own symbols, filled in below.
+      if (found === undefined) ownEntries.push({ from, name, entry });
+    }
+  }
+  const app = await WebAssembly.instantiate(module, imports);
+  for (const { from, name, entry } of ownEntries) {
+    const own = app.exports[name];
+    if (from === 'GOT.mem' && own instanceof WebAssembly.Global) entry.value = own.value;
+    else if (from === 'GOT.func' && typeof own === 'function') entry.value = slotOf(own);
+    else throw new Error(`${url} needs ${name}, which neither module defines`);
+  }
+  app.exports.__wasm_apply_data_relocs?.();
+  app.exports.__wasm_call_ctors?.();
+  return app;
+}
+
+/** A side module's memory and table needs, from its dylink.0 section. */
+function dylinkInfo(module, url) {
+  const section = WebAssembly.Module.customSections(module, 'dylink.0')[0];
+  if (!section) throw new Error(`${url} is not a side module (no dylink.0 section)`);
+  const bytes = new Uint8Array(section);
+  let at = 0;
+  const leb = () => {
+    let result = 0, shift = 0, byte;
+    do { byte = bytes[at++]; result |= (byte & 0x7f) << shift; shift += 7; } while (byte & 0x80);
+    return result >>> 0;
+  };
+  const info = { memorySize: 0, tableSize: 0 };
+  while (at < bytes.length) {
+    const type = bytes[at++];
+    const end = leb() + at;
+    // WASM_DYLINK_MEM_INFO: memory size, alignment, table size, alignment.
+    if (type === 1) { info.memorySize = leb(); leb(); info.tableSize = leb(); }
+    at = end;
+  }
+  return info;
 }
 
 /**
@@ -387,8 +490,13 @@ export class DOMBridge {
         const pixels = entry.devicePixelContentBoxSize?.[0];
         const cssWidth = box ? box.inlineSize : entry.contentRect.width;
         const cssHeight = box ? box.blockSize : entry.contentRect.height;
-        this.resizeCanvas(window, cssWidth, cssHeight, pixels);
-        this.call('nucleant_window_resized', id);
+        // The drawing buffer changes between calls into the module, never
+        // during one: a frame suspended under JSPI (waiting on the GPU) would
+        // otherwise be handed a canvas texture of the new size after its
+        // swapchain image was acquired at the old one.
+        const resize = () => this.resizeCanvas(window, cssWidth, cssHeight, pixels);
+        if (this.exports.nucleant_window_resized) this.enqueue({ name: 'nucleant_window_resized', args: [id], before: resize });
+        else resize();
       }
     });
     try {
