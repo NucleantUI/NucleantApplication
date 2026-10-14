@@ -113,7 +113,9 @@ public func nucleantPointer(
         }
     } else {
         // Touch and pen arrive as touches, as an Apple Pencil does on iOS.
-        let id = Int(pointerId)
+        // Safari on iPad hands out ids past 2³¹, which `Int` — 32 bits here —
+        // can't hold; wrapped, the id still tells the touches apart.
+        let id = Int(truncatingIfNeeded: pointerId)
         switch phase {
         case BrowserPointer.down: handler.browserTouchDown(id: id, at: location)
         case BrowserPointer.up: handler.browserTouchUp(id: id, at: location)
