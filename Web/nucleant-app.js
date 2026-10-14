@@ -128,7 +128,14 @@ export async function loadSideModule(main, url) {
   const tableBase = table.grow(tableSize);
   const slots = new Map();
   const slotOf = (fn) => {
-    if (!slots.has(fn)) slots.set(fn, table.grow(1, fn));
+    if (!slots.has(fn)) {
+      // Grown, then set: JavaScriptCore before Safari 27 fills a slot from
+      // grow's initial value in a way call_indirect then rejects ("call_indirect
+      // to a signature that does not match"), where a set slot calls fine.
+      const slot = table.grow(1);
+      table.set(slot, fn);
+      slots.set(fn, slot);
+    }
     return slots.get(fn);
   };
   const imports = { env: {}, 'GOT.mem': {}, 'GOT.func': {} };
