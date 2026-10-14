@@ -67,7 +67,14 @@ export async function runNucleantApp(options) {
   const name = String(options.app ?? options.wasm).split('/').pop().replace(/\.wasm(\.gz)?$/, '');
   const resources = options.resources ? await loadResources(options.resources) : null;
   const zoneinfo = options.zoneinfo ? await loadZoneinfo(options.zoneinfo) : null;
-  const env = { ...(resources ? { NUCLEANT_APP_PATH: resources.root } : {}), ...(options.env ?? {}) };
+  // The page's own time zone, by name, which Foundation looks up in the
+  // database `zoneinfo` mounted — without it TimeZone.current is UTC.
+  const timeZone = zoneinfo ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined;
+  const env = {
+    ...(resources ? { NUCLEANT_APP_PATH: resources.root } : {}),
+    ...(timeZone ? { TZ: timeZone } : {}),
+    ...(options.env ?? {}),
+  };
   const wasi = new NucleantWASI({ args: [name, ...(options.args ?? [])], env, jspi: gpu.blockingWaits, files: { ...resources?.files, ...zoneinfo } });
   const dom = new DOMBridge(options.container ?? document.body);
   dom.resources = resources;
