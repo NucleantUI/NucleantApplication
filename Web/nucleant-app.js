@@ -78,7 +78,11 @@ export async function runNucleantApp(options) {
   const wasi = new NucleantWASI({ args: [name, ...(options.args ?? [])], env, jspi: gpu.blockingWaits, files: { ...resources?.files, ...zoneinfo } });
   const dom = new DOMBridge(options.container ?? document.body);
   dom.resources = resources;
-  const { instance } = await WebAssembly.instantiate(await fetchModule(options.wasm), { ...wasi.imports, ...gpu.imports, ...dom.imports });
+  const imports = { ...wasi.imports, ...gpu.imports, ...dom.imports };
+  const bytes = await fetchModule(options.wasm);
+  const { instance } = resources?.hosts.length
+    ? await instantiateWithHosts(bytes, imports, resources)
+    : await WebAssembly.instantiate(bytes, imports);
   gpu.attach(instance);
   wasi.attach(instance);
   dom.attach(instance, gpu.blockingWaits);
@@ -93,6 +97,34 @@ export async function runNucleantApp(options) {
   }
   await dom.call('__main_argc_argv', 0, 0);
   return { instance, dom, gpu };
+}
+
+/**
+ * Instantiates the module with imports its packages supply from the page.
+ * A resource bundle may carry `*.wasm-host.mjs` scripts (resources.json lists
+ * them as `hosts`); each exports
+ *
+ *   prepare({ bytes, module, resources }) → { imports, attach? }
+ *
+ * called with the module's bytes, the module compiled and the loaded
+ * resources, before it is instantiated. The namespaces it returns are added
+ * to the page's own imports, a name it supplies replacing the page's;
+ * `attach(instance)`, if given, is called once the module is instantiated,
+ * before anything in it runs.
+ */
+async function instantiateWithHosts(bytes, imports, resources) {
+  const module = await WebAssembly.compile(bytes);
+  const merged = { ...imports };
+  const attachments = [];
+  for (const url of resources.hosts) {
+    const host = await import(url);
+    const { imports: supplied = {}, attach } = await host.prepare({ bytes, module, resources });
+    for (const [namespace, values] of Object.entries(supplied)) merged[namespace] = { ...merged[namespace], ...values };
+    if (attach) attachments.push(attach);
+  }
+  const instance = await WebAssembly.instantiate(module, merged);
+  for (const attach of attachments) await attach(instance);
+  return { instance };
 }
 
 /** A module's bytes; a URL ending in .gz is inflated (GitHub Pages serves .wasm uncompressed). */
@@ -197,13 +229,14 @@ function dylinkInfo(module, url) {
 }
 
 /**
- * The files a resources.json lists, fetched: `{ root, buildRoot, base, files }`
+ * The files a resources.json lists, fetched: `{ root, buildRoot, base, files, hosts }`
  * with `files` keyed by their absolute path under `root`, as NucleantWASI
  * takes them — and under the manifest's `buildRoot` too, the directory the
  * bundles were built in: SwiftPM's generated `Bundle.module` accessor for
  * wasm looks for its bundle only there (or at another path on the machine
  * that built it). `base` is the URL the files are served under, for the
- * module to hand a page in a frame (the `resourceURL` import).
+ * module to hand a page in a frame (the `resourceURL` import). `hosts` are
+ * the URLs of the bundles' `*.wasm-host.mjs` scripts (see instantiateWithHosts).
  */
 export async function loadResources(manifestURL) {
   const manifestBase = new URL(manifestURL, location.href);
@@ -219,7 +252,8 @@ export async function loadResources(manifestURL) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     return [[`${root}/${path}`, bytes], ...(buildRoot ? [[`${buildRoot}/${path}`, bytes]] : [])];
   }));
-  return { root, buildRoot, base: base.href, files: Object.fromEntries(entries.flat()) };
+  const hosts = (manifest.hosts ?? []).map((path) => new URL(path.split('/').map(encodeURIComponent).join('/'), base).href);
+  return { root, buildRoot, base: base.href, files: Object.fromEntries(entries.flat()), hosts };
 }
 
 /**

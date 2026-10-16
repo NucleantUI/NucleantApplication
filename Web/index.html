@@ -25,7 +25,10 @@
   <script type="module">
     import { runNucleantApp } from './nucleant-app.js';
     const status = document.getElementById('status');
-    runNucleantApp({ wasm: './{{PRODUCT}}.wasm', resources: './resources.json', zoneinfo: './zoneinfo.bin', container: document.getElementById('app') })
+    // The page's command line: each ?arg= in order, as CommandLine.arguments
+    // after the program name (index.html?arg=a&arg=b runs `App a b`).
+    const args = new URLSearchParams(location.search).getAll('arg');
+    runNucleantApp({ wasm: './{{PRODUCT}}.wasm', resources: './resources.json', zoneinfo: './zoneinfo.bin', container: document.getElementById('app'), args })
       .catch((error) => {
         status.textContent = `Could not start {{PRODUCT}}: ${error.message}`;
         console.error(error);

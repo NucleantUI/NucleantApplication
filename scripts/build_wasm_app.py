@@ -27,8 +27,11 @@ directory gets:
                           NUCLEANT_APP_PATH=/app, as an Android app's
                           Activity does with the bundles it unpacks; and
                           again at the directory they were built in,
-                          where `Bundle.module` looks for them
-    zoneinfo.bin          the time zone database, from this machine's
+                          where `Bundle.module` looks for them. A bundle's
+                          `*.wasm-host.mjs` files are listed as `hosts`:
+                          a package's page-side part, which supplies some
+                          of the module's imports (Web/nucleant-app.js)
+    zoneinfo.bin         the time zone database, from this machine's
                           /usr/share/zoneinfo — the page mounts it there,
                           where Foundation reads named zones (see
                           pack_zoneinfo)
@@ -162,6 +165,9 @@ def copy_resources(products: Path, output: Path) -> None:
         shutil.copytree(bundle, destination / bundle.name)
         files += sorted(p.relative_to(destination).as_posix() for p in (destination / bundle.name).rglob("*") if p.is_file())
     manifest = {"root": RESOURCES_ROOT, "buildRoot": str(products.resolve()), "base": "resources/", "files": files}
+    hosts = [path for path in files if path.endswith(".wasm-host.mjs")]
+    if hosts:
+        manifest["hosts"] = hosts
     (output / "resources.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
