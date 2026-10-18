@@ -44,7 +44,9 @@ let SWIFT_JAVA_VERSION: Version = "0.4.2"
 func getDependencies() -> [Package.Dependency] {
     var deps: [Package.Dependency] = devMode
         ? [.package(path: "../NucleantVulkan")]
-        : [.package(url: "https://github.com/NucleantUI/NucleantVulkan", branch: "master")]
+        // By release, up to the next minor: a branch requirement here would
+        // override the version every package above asks for.
+        : [.package(url: "https://github.com/NucleantUI/NucleantVulkan", .upToNextMinor(from: "0.0.1"))]
     if isAndroid {
         deps.append(
             .package(url: "https://github.com/swiftlang/swift-java", from: SWIFT_JAVA_VERSION)
