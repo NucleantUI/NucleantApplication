@@ -1,5 +1,8 @@
 import Testing
 @testable import NucleantSync
+#if os(Windows)
+import Platform_Windows
+#endif
 
 @MainActor
 @Suite struct DisplaySyncTests {
@@ -11,7 +14,7 @@ import Testing
             ticks += 1
         }
         defer { DisplaySync.destroyCallback(fps: 60, index: index) }
-        try await Task.sleep(for: .milliseconds(500))
+        try await letTimePass(.milliseconds(500))
         #expect(ticks > 5)
     }
 
@@ -26,10 +29,10 @@ import Testing
     @Test func destroyedCallbackStopsFiring() async throws {
         var ticks = 0
         let index = DisplaySync.newCallback(fps: 60) { _ in ticks += 1 }
-        try await Task.sleep(for: .milliseconds(200))
+        try await letTimePass(.milliseconds(200))
         DisplaySync.destroyCallback(fps: 60, index: index)
         let after = ticks
-        try await Task.sleep(for: .milliseconds(200))
+        try await letTimePass(.milliseconds(200))
         #expect(ticks == after)
     }
 
@@ -38,11 +41,26 @@ import Testing
         var slow = 0
         let f = DisplaySync.newCallback(fps: DisplaySync.maxFPS) { _ in fast += 1 }
         let s = DisplaySync.newCallback(fps: 15) { _ in slow += 1 }
-        try await Task.sleep(for: .milliseconds(600))
+        try await letTimePass(.milliseconds(600))
         DisplaySync.destroyCallback(fps: DisplaySync.maxFPS, index: f)
         DisplaySync.destroyCallback(fps: 15, index: s)
         #expect(fast > 0)
         #expect(slow > 0)
         #expect(fast > slow)
     }
+}
+
+/// Lets `duration` pass with the platform's sync source running. On Windows
+/// that source is the message loop's turns, and during a test nothing turns
+/// the loop but the test.
+@MainActor
+private func letTimePass(_ duration: Duration) async throws {
+    #if os(Windows)
+    let end = ContinuousClock.now.advanced(by: duration)
+    while ContinuousClock.now < end {
+        Win32EventLoop.shared.pumpEvents(timeoutMilliseconds: 4)
+    }
+    #else
+    try await Task.sleep(for: duration)
+    #endif
 }

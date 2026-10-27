@@ -5,8 +5,8 @@
 //  The platform-neutral description of an app's menu bar, and the two
 //  protocols on either side of it: `WindowCommands` is what the app's UI layer
 //  provides, `MenuBarHost` is what a platform
-//  provider (Platform_MacOS, Platform_iOS — later Windows, Linux, Android)
-//  turns it into. Neither side sees the other's framework types.
+//  provider (Platform_MacOS, Platform_iOS, Platform_Windows — later Linux,
+//  Android) turns it into. Neither side sees the other's framework types.
 //
 // https://developer.apple.com/documentation/swiftui/commands
 // https://developer.apple.com/documentation/appkit/menus
