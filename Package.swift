@@ -39,7 +39,7 @@ func getDependencies() -> [Package.Dependency] {
         ? [.package(path: "../NucleantVulkan")]
         // By release, up to the next minor: a branch requirement here would
         // override the version every package above asks for.
-        : [.package(url: "https://github.com/NucleantUI/NucleantVulkan", .upToNextMinor(from: "0.0.1"))]
+        : [.package(url: "https://github.com/NucleantUI/NucleantVulkan", .upToNextMinor(from: "0.0.2"))]
     if isAndroid {
         deps.append(
             .package(url: "https://github.com/swiftlang/swift-java", from: SWIFT_JAVA_VERSION)
@@ -79,6 +79,16 @@ let isLinux = !isAndroid && !isWasm
 let isLinux = false
 #endif
 
+// Windows is native too, like Linux: the Windows toolchain builds for the
+// machine it runs on and nothing cross-compiles into it, so the host is the
+// target. (NucleantVulkan has a Windows build from 0.0.2, hence the floor
+// above.)
+#if os(Windows)
+let isWindows = true
+#else
+let isWindows = false
+#endif
+
 /// Every module the package vends, for PIP_MODE's single dynamic library.
 /// Platform_Linux and Platform_Android join the list on their own host for the
 /// same reason they get their own product elsewhere: only one platform provider
@@ -88,6 +98,9 @@ func pipProductTargets() -> [String] {
     var targets = ["NucleantApplication", "NucleantWindow", "NucleantSync", "Platform_MacOS", "Platform_iOS"]
     if isLinux {
         targets.append("Platform_Linux")
+    }
+    if isWindows {
+        targets.append("Platform_Windows")
     }
     if isAndroid {
         targets.append("Platform_Android")
@@ -103,6 +116,9 @@ func platformProducts() -> [Product] {
     ]
     if isLinux {
         products.append(.library(name: "Platform_Linux", type: .static, targets: ["Platform_Linux"]))
+    }
+    if isWindows {
+        products.append(.library(name: "Platform_Windows", type: .static, targets: ["Platform_Windows"]))
     }
     if isAndroid {
         products.append(.library(name: "Platform_Android", type: .static, targets: ["Platform_Android"]))
@@ -223,6 +239,29 @@ func platformTargets() -> [Target] {
             )
         ])
     }
+    if isWindows {
+        targets.append(contentsOf: [
+            // Win32 through the toolchain's WinSDK module, which links
+            // user32, gdi32, dwmapi and advapi32 itself: nothing to declare.
+            .target(
+                name: "Platform_Windows",
+                dependencies: ["NucleantWindow"]
+            ),
+            // `swift run Win32Probe` — one window with a render engine behind
+            // it, logging the input it receives. Windows' counterpart of
+            // WaylandProbe and WasmProbe: the smallest thing that answers
+            // "does the window, input and render layer work on this machine".
+            .executableTarget(
+                name: "Win32Probe",
+                dependencies: [
+                    "NucleantApplication",
+                    "NucleantWindow",
+                    "Platform_Windows",
+                    .product(name: "NucleantVulkan", package: "NucleantVulkan"),
+                ]
+            ),
+        ])
+    }
     if isAndroid {
         targets.append(.systemLibrary(name: "CAndroidChoreographer"))
         // android/native_window_jni.h. `ANativeWindow_fromSurface` is the only
@@ -329,7 +368,7 @@ func platformTargets() -> [Target] {
 
 /// NucleantApplication's per-platform window provider. Only one is ever in
 /// scope for a given build, which is what lets `PlatformWindow` /
-/// `AppDelegate` be one name across all three.
+/// `AppDelegate` be one name across all of them.
 func platformDependencies() -> [Target.Dependency] {
     var deps: [Target.Dependency] = [
         .byName(name: "Platform_MacOS", condition: .when(platforms: [.macOS])),
@@ -337,6 +376,9 @@ func platformDependencies() -> [Target.Dependency] {
     ]
     if isLinux {
         deps.append(.byName(name: "Platform_Linux", condition: .when(platforms: [.linux])))
+    }
+    if isWindows {
+        deps.append(.byName(name: "Platform_Windows", condition: .when(platforms: [.windows])))
     }
     if isAndroid {
         deps.append(.byName(name: "Platform_Android", condition: .when(platforms: [.android])))
@@ -350,13 +392,17 @@ func platformDependencies() -> [Target.Dependency] {
     return deps
 }
 
-/// NucleantSync's per-platform sync sources. Linux has no display-wide vsync
-/// callback, so its handler rides `Platform_Linux`'s event loop; Android's is
-/// the Choreographer shim; Apple platforms need nothing from the package.
+/// NucleantSync's per-platform sync sources. Linux and Windows have no
+/// display-wide vsync callback, so their handlers ride `Platform_Linux`'s and
+/// `Platform_Windows`'s event loops; Android's is the Choreographer shim;
+/// Apple platforms need nothing from the package.
 func syncDependencies() -> [Target.Dependency] {
     var deps: [Target.Dependency] = []
     if isLinux {
         deps.append(.byName(name: "Platform_Linux", condition: .when(platforms: [.linux])))
+    }
+    if isWindows {
+        deps.append(.byName(name: "Platform_Windows", condition: .when(platforms: [.windows])))
     }
     if isAndroid {
         deps.append(.byName(name: "CAndroidChoreographer", condition: .when(platforms: [.android])))
