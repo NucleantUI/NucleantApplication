@@ -242,7 +242,7 @@ final class Win32Window {
     // MARK: - Geometry
 
     /// Sizes the window so its client area is `width` × `height` points at
-    /// its DPI.
+    /// its DPI — as far as its monitor's work area allows (`fitToWorkArea`).
     private func setClientSize(width: Double, height: Double) {
         let wanted = (width: Int32((width * scale).rounded()), height: Int32((height * scale).rounded()))
         var rect = RECT(left: 0, top: 0, right: wanted.width, bottom: wanted.height)
@@ -258,6 +258,30 @@ final class Win32Window {
         if short != (0, 0) {
             SetWindowPos(handle, nil, 0, 0, rect.right - rect.left + short.width, rect.bottom - rect.top + short.height, flags)
         }
+        fitToWorkArea()
+    }
+
+    /// Cuts the window down to its monitor's work area (the screen less the
+    /// taskbar) and moves it onto it. Windows takes a window larger than the
+    /// screen as asked, title bar or bottom edge out of reach; AppKit fits a
+    /// new window to the screen, and so does this.
+    private func fitToWorkArea() {
+        var monitor = MONITORINFO()
+        monitor.cbSize = DWORD(MemoryLayout<MONITORINFO>.size)
+        guard GetMonitorInfoW(MonitorFromWindow(handle, DWORD(MONITOR_DEFAULTTONEAREST)), &monitor) else { return }
+        let area = monitor.rcWork
+        var frame = RECT()
+        GetWindowRect(handle, &frame)
+        let size = (
+            width: min(frame.right - frame.left, area.right - area.left),
+            height: min(frame.bottom - frame.top, area.bottom - area.top)
+        )
+        let origin = (
+            left: min(max(frame.left, area.left), area.right - size.width),
+            top: min(max(frame.top, area.top), area.bottom - size.height)
+        )
+        guard origin != (frame.left, frame.top) || size != (frame.right - frame.left, frame.bottom - frame.top) else { return }
+        SetWindowPos(handle, nil, origin.left, origin.top, size.width, size.height, UINT(SWP_NOZORDER | SWP_NOACTIVATE))
     }
 
     /// Re-reads the client area. True if it, or the scale, changed since
