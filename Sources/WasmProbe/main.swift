@@ -45,12 +45,12 @@ final class ProbeSlot: RenderContainerNode, @unchecked Sendable {
         if case .pixels(let node) = context { observe(node) }
     }
 
-    func update(engine: Engine, cmd: VkCommandBuffer) {
-        if case .pixels(let node) = context { node.update(engine, slot: self, cmd: cmd) }
+    func update(device: Device, cmd: VkCommandBuffer) {
+        if case .pixels(let node) = context { node.update(device, slot: self, cmd: cmd) }
     }
 
-    func destroyResources(engine: Engine) {
-        if case .pixels(let node) = context { node.destroyResources(engine) }
+    func destroyResources(device: Device) {
+        if case .pixels(let node) = context { node.destroyResources(device) }
     }
 
     func getImageView() -> VkImageView? {
@@ -95,7 +95,7 @@ final class ProbeWindow: NucleantWindow, BrowserWindowDelegate {
             (Int(window.bufferWidth), Int(window.bufferHeight))
         }
         engine.clearColor = (0.05, 0.05, 0.08, 1)
-        let node = try engine.makePixelBufferNode(width: Self.canvasWidth, height: Self.canvasHeight, scale: 4)
+        let node = try engine.renderDevice.makePixelBufferNode(width: Self.canvasWidth, height: Self.canvasHeight, scale: 4)
         engine.append(ProbeSlot(id: 1, context: .pixels(node)))
         renderEngine = engine
         pixels = node
