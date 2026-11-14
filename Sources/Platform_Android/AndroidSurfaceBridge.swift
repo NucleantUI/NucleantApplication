@@ -165,6 +165,21 @@ public func nucleantKey(down: Bool, keyCode: Int32, unicodeChar: Int32) {
     AndroidSurfaceHost.onKey?(down, Int(keyCode), Int(unicodeChar))
 }
 
+/// What the soft keyboard should be — an `AndroidSurfaceHost.TextInputKind`
+/// raw value. Polled by the Activity after every frame, like
+/// `nucleantFirstFrameRendered`: the window decides on the UI thread, and the
+/// Activity asks on the same thread, so nothing calls up into Java.
+public func nucleantTextInputKind() -> Int32 {
+    AndroidSurfaceHost.textInputKind.rawValue
+}
+
+// MARK: - Appearance
+
+/// Whether the system is in dark mode — from `Configuration.uiMode`.
+public func nucleantSetNightMode(_ night: Bool) {
+    AndroidSurfaceHost.setNightMode(night)
+}
+
 // MARK: - Display
 
 /// The display's scale factor — `DisplayMetrics.density`.

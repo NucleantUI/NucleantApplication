@@ -1,6 +1,7 @@
 package org.nucleantui;
 
 import android.app.Activity;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.Choreographer;
 import android.view.WindowInsets;
@@ -101,6 +102,10 @@ public abstract class NucleantActivity extends Activity {
                     : (frameTimeNanos - lastFrameNanos) / 1_000_000_000.0;
                 lastFrameNanos = frameTimeNanos;
                 NucleantBridge.nucleantDrawFrame(dt);
+                // The frame may have moved the keys to or from a text field:
+                // the soft keyboard follows. Asked rather than told — see
+                // NucleantSurfaceView.setTextInputKind.
+                surfaceView.setTextInputKind(NucleantBridge.nucleantTextInputKind());
                 Choreographer.getInstance().postFrameCallback(this);
             }
         };
@@ -109,6 +114,9 @@ public abstract class NucleantActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Before the app starts, so its first frame is already in the right
+        // scheme.
+        NucleantBridge.nucleantSetNightMode(isNightMode(getResources().getConfiguration()));
 
         unpackResources();
 
@@ -181,6 +189,20 @@ public abstract class NucleantActivity extends Activity {
         // it again, or the render loop is never started: the Swift side latches
         // "running" on the first active(1) and ignores later ones.
         NucleantBridge.nucleantOnResume();
+    }
+
+    /**
+     * Dark mode switched, among other things. The manifest lists {@code uiMode}
+     * in {@code configChanges}, so the Activity is told rather than recreated.
+     */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        NucleantBridge.nucleantSetNightMode(isNightMode(newConfig));
+    }
+
+    private static boolean isNightMode(Configuration config) {
+        return (config.uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
     }
 
     @Override
