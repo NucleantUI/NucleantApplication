@@ -68,6 +68,40 @@ public enum AndroidSurfaceHost {
         case down = 0, moved = 1, up = 2, cancelled = 3
     }
 
+    // MARK: - Soft keyboard
+
+    /// The text the focused view takes, which decides the soft keyboard.
+    /// Values cross to Java as they are: `NucleantSurfaceView` reads them.
+    public enum TextInputKind: Int32 {
+        /// Nothing focused takes text: no keyboard.
+        case none = 0
+        /// A one-line field: the keyboard's action key submits.
+        case singleLine = 1
+        /// A text editor: the action key is a newline.
+        case multiLine = 2
+    }
+
+    /// What the window wants from the soft keyboard. Set by the window on the
+    /// UI thread, read by the Activity on the same thread after each frame —
+    /// polled for the same reason `firstFrameRendered` is.
+    public nonisolated(unsafe) static var textInputKind: TextInputKind = .none
+
+    // MARK: - Appearance
+
+    /// Whether the system is in dark mode — `Configuration.uiMode`'s night
+    /// bits, which only Java can read. Sent before the app starts and again on
+    /// every configuration change.
+    public nonisolated(unsafe) private(set) static var isNightMode = false
+
+    /// Called when `isNightMode` changes, on the UI thread.
+    public nonisolated(unsafe) static var onAppearanceChanged: (() -> Void)?
+
+    static func setNightMode(_ night: Bool) {
+        guard night != isNightMode else { return }
+        isNightMode = night
+        onAppearanceChanged?()
+    }
+
     private static func setSurface(_ w: OpaquePointer?, _ width: Int, _ height: Int) {
         lock.lock()
         Self.window = w

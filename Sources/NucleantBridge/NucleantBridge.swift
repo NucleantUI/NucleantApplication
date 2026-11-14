@@ -78,6 +78,20 @@ public func nucleantKeyUp(keyCode: Int32, unicodeChar: Int32) {
     nucleantKey(down: false, keyCode: keyCode, unicodeChar: unicodeChar)
 }
 
+/// What the soft keyboard should be: 0 none, 1 a one-line field, 2 a text
+/// editor. `NucleantActivity` polls it after every frame.
+public func nucleantTextInputKind() -> Int32 {
+    Platform_Android.nucleantTextInputKind()
+}
+
+// MARK: - Appearance
+
+/// `Configuration.uiMode` is night — sent before the app starts and on every
+/// configuration change.
+public func nucleantSetNightMode(night: Bool) {
+    Platform_Android.nucleantSetNightMode(night)
+}
+
 // MARK: - Display and frames
 
 /// The display's scale factor — `DisplayMetrics.density`. Only Java can read it,

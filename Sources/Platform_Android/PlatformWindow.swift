@@ -253,11 +253,23 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
         let characters: String? = unicodeChar != 0
             ? String(UnicodeScalar(UInt32(unicodeChar)) ?? " ")
             : nil
+        // Into the macOS key codes the UI layer reads — see AndroidKeyMap.
+        let code = AndroidKeyMap.keyCode(keyCode)
         if down {
-            win_delegate?.on_key_down(keyCode: UInt16(truncatingIfNeeded: keyCode), characters: characters)
+            win_delegate?.on_key_down(keyCode: code, characters: characters)
         } else {
-            win_delegate?.on_key_up(keyCode: UInt16(truncatingIfNeeded: keyCode), characters: characters)
+            win_delegate?.on_key_up(keyCode: code, characters: characters)
         }
+    }
+
+    // MARK: - Soft keyboard
+
+    /// What the soft keyboard should be for the view that has the keys. The
+    /// Activity reads it after every frame and shows, switches or hides the
+    /// keyboard to match.
+    public var textInputKind: AndroidSurfaceHost.TextInputKind {
+        get { AndroidSurfaceHost.textInputKind }
+        set { AndroidSurfaceHost.textInputKind = newValue }
     }
 }
 #endif
