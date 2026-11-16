@@ -36,6 +36,11 @@ public abstract class NucleantActivity extends Activity {
         System.loadLibrary("NucleantMain");
     }
 
+    // AndroidSurfaceHost.ActivityState, as nucleantSetActivityState takes it.
+    private static final int ACTIVITY_STOPPED = 0;
+    private static final int ACTIVITY_STARTED = 1;
+    private static final int ACTIVITY_RESUMED = 2;
+
     private NucleantSurfaceView surfaceView;
     private boolean started = false;
     private long lastFrameNanos = 0;
@@ -205,9 +210,23 @@ public abstract class NucleantActivity extends Activity {
         return (config.uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
     }
 
+    /**
+     * On screen again, or for the first time: inactive until resumed. The
+     * window's phase follows {@code onStart}, {@code onResume},
+     * {@code onPause} and {@code onStop}, which go to the Swift side whether
+     * or not the app has started — it starts from wherever the Activity is.
+     */
+    @Override
+    protected void onStart() {
+        super.onStart();
+        NucleantBridge.nucleantSetActivityState(ACTIVITY_STARTED);
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
+        NucleantBridge.nucleantSetActivityState(ACTIVITY_RESUMED);
+
         // Only once the app exists. The first onResume() of the process runs
         // before the surface — and therefore before the app — so forwarding it
         // then would latch the render loop's "running" flag with nothing to
@@ -227,7 +246,16 @@ public abstract class NucleantActivity extends Activity {
         // traffic it generates ("excessive binder traffic during cached").
         Choreographer.getInstance().removeFrameCallback(frameCallback);
         NucleantBridge.nucleantOnPause();
+        // Still on screen, not in front: inactive.
+        NucleantBridge.nucleantSetActivityState(ACTIVITY_STARTED);
         super.onPause();
+    }
+
+    /** Off screen: the background. */
+    @Override
+    protected void onStop() {
+        NucleantBridge.nucleantSetActivityState(ACTIVITY_STOPPED);
+        super.onStop();
     }
 
     @Override

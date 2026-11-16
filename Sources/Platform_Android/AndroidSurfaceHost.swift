@@ -102,6 +102,34 @@ public enum AndroidSurfaceHost {
         onAppearanceChanged?()
     }
 
+    // MARK: - Activity lifecycle
+
+    /// Where the Activity is in its lifecycle, as `NucleantActivity` reports
+    /// it. The values cross from Java as they are.
+    public enum ActivityState: Int32 {
+        /// Created but not started, or stopped: not on screen.
+        case stopped = 0
+        /// Started, or paused again: on screen, but not in front taking
+        /// input.
+        case started = 1
+        /// Resumed: in front, taking input.
+        case resumed = 2
+    }
+
+    /// The Activity's lifecycle state. Reported from its first `onStart()`
+    /// on, whether or not the app has started yet, so a window made later
+    /// starts from where the Activity already is. UI thread only.
+    public nonisolated(unsafe) private(set) static var activityState = ActivityState.stopped
+
+    /// Called when `activityState` changes, on the UI thread.
+    public nonisolated(unsafe) static var onActivityStateChanged: (() -> Void)?
+
+    static func setActivityState(_ state: ActivityState) {
+        guard state != activityState else { return }
+        activityState = state
+        onActivityStateChanged?()
+    }
+
     private static func setSurface(_ w: OpaquePointer?, _ width: Int, _ height: Int) {
         lock.lock()
         Self.window = w
