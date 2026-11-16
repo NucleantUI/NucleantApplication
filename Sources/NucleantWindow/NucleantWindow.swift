@@ -55,6 +55,21 @@ public protocol NucleantWindow: AnyObject {
     // touch host never calls these: its two fingers arrive as touches.
     func on_magnify(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double)
     func on_rotate(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double)
+
+    // Where the window is in the app's life, as its platform tells it. Each
+    // is called when the window enters that phase, never twice in a row for
+    // the same one, and a window starts out active:
+    //
+    // - active: on screen and in use.
+    // - inactive: in the foreground but not in use, so its work can pause —
+    //   minimized, on macOS.
+    // - background: not on screen at all — the app hidden, on macOS. Nothing
+    //   the window draws is seen until it is active or inactive again.
+    //
+    // A platform that tells none of them leaves its windows active.
+    func on_phase_active()
+    func on_phase_inactive()
+    func on_phase_background()
 }
 
 /// Where a trackpad gesture is in its life.
@@ -76,5 +91,8 @@ public extension NucleantWindow {
     func on_surface_recreated() {}
     func on_magnify(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double) {}
     func on_rotate(phase: TrackpadGesturePhase, delta: Double, x: Double, y: Double) {}
+    func on_phase_active() {}
+    func on_phase_inactive() {}
+    func on_phase_background() {}
 }
 
