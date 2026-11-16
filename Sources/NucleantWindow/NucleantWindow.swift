@@ -63,9 +63,12 @@ public protocol NucleantWindow: AnyObject {
     // - active: on screen and in use.
     // - inactive: in the foreground but not in use, so its work can pause —
     //   minimized, on macOS; on iOS, its scene in the app switcher, behind a
-    //   call or Control Center, and on its way to or from the background.
+    //   call or Control Center, and on its way to or from the background; on
+    //   Android, the Activity paused — a dialog over it, another app in
+    //   front in split screen — and on its way to the background.
     // - background: not on screen at all — the app hidden, on macOS; on iOS,
-    //   its scene off screen, where the GPU work it submits is refused.
+    //   its scene off screen, where the GPU work it submits is refused; on
+    //   Android, the Activity stopped, or without a surface to draw into.
     //   Nothing the window draws is seen until it is active or inactive
     //   again.
     //

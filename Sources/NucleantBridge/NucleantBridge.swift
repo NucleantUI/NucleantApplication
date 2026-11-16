@@ -121,6 +121,13 @@ public func nucleantOnPause() {
     nucleantSetActive(false)
 }
 
+/// `onStart()` and `onPause()` 1, `onResume()` 2, `onStop()` 0: the
+/// window's phase follows these. Unlike `nucleantOnResume`, sent whether or
+/// not the app has started, so the app starts from where the Activity is.
+public func nucleantSetActivityState(state: Int32) {
+    Platform_Android.nucleantSetActivityState(state)
+}
+
 /// `Activity.onDestroy()` — the Activity is gone for good, not backgrounded.
 public func nucleantOnDestroy() {
     Platform_Android.nucleantOnDestroy()

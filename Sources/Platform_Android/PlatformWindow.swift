@@ -35,7 +35,13 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
 
     /// Strongly held by the owner; referenced weakly
     /// so the window does not retain its delegate.
-    public weak var win_delegate: WindowBase?
+    ///
+    /// Told the phase the window is in as soon as it is set: the app starts
+    /// once the Activity has a surface, which is normally resumed by then,
+    /// but nothing would say so if it weren't until the next change.
+    public weak var win_delegate: WindowBase? {
+        didSet { updatePhase() }
+    }
 
     /// Whether frames from the Activity should be drawn. Set when a surface
     /// exists and the Activity is resumed; cleared when either goes away.
@@ -71,6 +77,9 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
         }
         AndroidSurfaceHost.onActiveChanged = { [weak self] active in
             active ? self?.startRenderLoop() : self?.stopRenderLoop()
+        }
+        AndroidSurfaceHost.onActivityStateChanged = { [weak self] in
+            self?.updatePhase()
         }
         AndroidSurfaceHost.onFrame = { [weak self] dt in
             guard let self, self.isRunning else { return }
@@ -130,6 +139,7 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
                 )
             } catch {
                 NSLog("[nucleant] failed to create Vulkan engine: \(error)")
+                // No engine, nothing to draw into: still the background.
                 return
             }
             win_delegate?.on_size(
@@ -153,7 +163,11 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
                 h: Double(h) / AndroidSurfaceHost.displayScale
             )
         }
+        hasSurface = true
         startRenderLoop()
+        // After the engine: coming back, the phase the window enters runs a
+        // frame at once, and that frame draws into this surface.
+        updatePhase()
     }
 
     /// Must not return until the renderer has let go of the window — the
@@ -205,6 +219,53 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
     /// everything else when the process dies, same as always.
     private func surfaceDestroyed() {
         stopRenderLoop()
+        // Before the Surface goes, so nothing draws into it: the frame the
+        // background runs draws nothing.
+        hasSurface = false
+        updatePhase()
+    }
+
+    // MARK: - Phase
+
+    private enum Phase { case active, inactive, background }
+
+    /// The phase `win_delegate` was last told. A window starts out active.
+    private var phase = Phase.active
+
+    /// Whether there is a surface to draw into: from the engine built on it
+    /// until `surfaceDestroyed`. The app starts once the Activity has one.
+    private var hasSurface = AndroidSurfaceHost.currentSurface().0 != nil
+
+    /// The phase as the Activity and its surface have it now:
+    ///
+    /// - background while the Activity is stopped, or has no surface —
+    ///   another app or the Home screen in front, the screen off. Coming
+    ///   back, the Activity resumes before its new surface exists, so the
+    ///   window stays in the background until that surface is there.
+    /// - inactive while it is started or paused: still on screen, but not in
+    ///   front taking input — a dialog or a permission request over it,
+    ///   another app in front in split screen, and on its way to the
+    ///   background.
+    /// - active while it is resumed.
+    private var currentPhase: Phase {
+        guard hasSurface else { return .background }
+        switch AndroidSurfaceHost.activityState {
+        case .stopped: return .background
+        case .started: return .inactive
+        case .resumed: return .active
+        }
+    }
+
+    /// Tell `win_delegate` the phase the window is in now, if it changed.
+    private func updatePhase() {
+        let phase = currentPhase
+        guard phase != self.phase, let win_delegate else { return }
+        self.phase = phase
+        switch phase {
+        case .active: win_delegate.on_phase_active()
+        case .inactive: win_delegate.on_phase_inactive()
+        case .background: win_delegate.on_phase_background()
+        }
     }
 
     // MARK: - Frame loop

@@ -210,6 +210,14 @@ public func nucleantSetActive(_ active: Bool) {
     AndroidSurfaceHost.onActiveChanged?(active)
 }
 
+/// The Activity's lifecycle state — `AndroidSurfaceHost.ActivityState`: 0
+/// stopped, 1 started or paused, 2 resumed — which a window's phase follows.
+/// Sent from the first `onStart()` on, whether or not the app has started.
+public func nucleantSetActivityState(_ state: Int32) {
+    guard let state = AndroidSurfaceHost.ActivityState(rawValue: state) else { return }
+    AndroidSurfaceHost.setActivityState(state)
+}
+
 /// `Activity.onDestroy()` — the Activity is gone for good, not backgrounded.
 ///
 /// Nothing to unwind: with no interpreter to finalize, the app's teardown is the
