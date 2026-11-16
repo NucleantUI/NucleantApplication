@@ -62,9 +62,12 @@ public protocol NucleantWindow: AnyObject {
     //
     // - active: on screen and in use.
     // - inactive: in the foreground but not in use, so its work can pause —
-    //   minimized, on macOS.
-    // - background: not on screen at all — the app hidden, on macOS. Nothing
-    //   the window draws is seen until it is active or inactive again.
+    //   minimized, on macOS; on iOS, its scene in the app switcher, behind a
+    //   call or Control Center, and on its way to or from the background.
+    // - background: not on screen at all — the app hidden, on macOS; on iOS,
+    //   its scene off screen, where the GPU work it submits is refused.
+    //   Nothing the window draws is seen until it is active or inactive
+    //   again.
     //
     // A platform that tells none of them leaves its windows active.
     func on_phase_active()

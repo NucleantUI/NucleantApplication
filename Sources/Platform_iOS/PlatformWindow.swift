@@ -21,7 +21,14 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
 
     /// Strongly-held by the owner; we only reference
     /// it weakly so the window doesn't retain its delegate.
-    public weak var win_delegate: WindowBase?
+    ///
+    /// Told the phase the window is in as soon as it is set: a window can be
+    /// built while its scene, or the app, is not active yet — or in the
+    /// background, for an app launched there — and no notification would
+    /// say so until the next change.
+    public weak var win_delegate: WindowBase? {
+        didSet { enter(currentPhase) }
+    }
 
     private let vulkanView: VulkanView
     private let rootVC: UIViewController
@@ -46,6 +53,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         vc.view = view
         self.rootViewController = vc
         startDisplayLink()
+        followPhases(of: nil)
     }
 
     /// Attaches to a real `UIWindowScene` instead of a bare frame — this is
@@ -64,6 +72,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         vc.view = view
         self.rootViewController = vc
         startDisplayLink()
+        followPhases(of: windowScene)
     }
 
     @available(*, unavailable)
@@ -87,6 +96,66 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     public override func layoutSubviews() {
         super.layoutSubviews()
         win_delegate?.on_size(w: Double(bounds.width), h: Double(bounds.height))
+    }
+
+    // MARK: - Phase
+
+    private enum Phase { case active, inactive, background }
+
+    /// The phase `win_delegate` was last told. A window starts out active.
+    private var phase = Phase.active
+
+    /// The phase of the window's scene as UIKit has it now. A window made
+    /// without one is given a scene of UIKit's own, standing for its screen.
+    private var currentPhase: Phase {
+        switch windowScene?.activationState {
+        case .foregroundActive: return .active
+        case .foregroundInactive: return .inactive
+        case .background: return .background
+        // No scene, or not connected yet: the notifications that follow tell.
+        default: return phase
+        }
+    }
+
+    /// The phases go as the scene's: active while it is in use, inactive
+    /// while it is still on screen but not in use — the app switcher, a
+    /// call, Control Center — and the background once it is off screen.
+    /// UIKit posts each change, for each scene and for the app as a whole.
+    /// A window made from its scene follows that scene's, so the windows of
+    /// two scenes side by side each go their own way; a window made from a
+    /// frame — an app with no scene manifest — follows the app's.
+    ///
+    /// Out of sight is the background as soon as UIKit says so: GPU work
+    /// submitted after that is refused, and logged, by iOS.
+    private func followPhases(of scene: UIWindowScene?) {
+        let center = NotificationCenter.default
+        if let scene {
+            center.addObserver(self, selector: #selector(becameActive(_:)), name: UIScene.didActivateNotification, object: scene)
+            center.addObserver(self, selector: #selector(resigningActive(_:)), name: UIScene.willDeactivateNotification, object: scene)
+            center.addObserver(self, selector: #selector(enteredBackground(_:)), name: UIScene.didEnterBackgroundNotification, object: scene)
+            center.addObserver(self, selector: #selector(enteringForeground(_:)), name: UIScene.willEnterForegroundNotification, object: scene)
+        } else {
+            center.addObserver(self, selector: #selector(becameActive(_:)), name: UIApplication.didBecomeActiveNotification, object: nil)
+            center.addObserver(self, selector: #selector(resigningActive(_:)), name: UIApplication.willResignActiveNotification, object: nil)
+            center.addObserver(self, selector: #selector(enteredBackground(_:)), name: UIApplication.didEnterBackgroundNotification, object: nil)
+            center.addObserver(self, selector: #selector(enteringForeground(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        }
+    }
+
+    @objc private func becameActive(_ notification: Notification) { enter(.active) }
+    @objc private func resigningActive(_ notification: Notification) { enter(.inactive) }
+    @objc private func enteredBackground(_ notification: Notification) { enter(.background) }
+    /// Coming back is inactive first: on screen, not in use until it is active.
+    @objc private func enteringForeground(_ notification: Notification) { enter(.inactive) }
+
+    private func enter(_ phase: Phase) {
+        guard phase != self.phase, let win_delegate else { return }
+        self.phase = phase
+        switch phase {
+        case .active: win_delegate.on_phase_active()
+        case .inactive: win_delegate.on_phase_inactive()
+        case .background: win_delegate.on_phase_background()
+        }
     }
 
     // MARK: - Display link
