@@ -93,6 +93,49 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
         self.contentView = view
         self.delegate = self
         self.startDisplayLink()
+        // Hiding is the app's, not the window's, so it is heard from the app.
+        // A selector observer is dropped by NotificationCenter when the window
+        // goes away.
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(appHiddenChanged(_:)), name: NSApplication.didHideNotification, object: nil)
+        center.addObserver(self, selector: #selector(appHiddenChanged(_:)), name: NSApplication.didUnhideNotification, object: nil)
+    }
+
+    // MARK: - Phase
+
+    private enum Phase {
+        case active, inactive, background
+    }
+
+    /// The phase `win_delegate` was last told; a window starts out active.
+    private var phase = Phase.active
+
+    /// Minimized into the Dock, as AppKit last told the window's delegate.
+    private var isInDock = false
+
+    /// What SwiftUI reports for a macOS window: background while the app is
+    /// hidden, inactive while the window is minimized, active otherwise —
+    /// behind another app's windows, or covered by them, included.
+    private var currentPhase: Phase {
+        if NSApplication.shared.isHidden { return .background }
+        if isInDock { return .inactive }
+        return .active
+    }
+
+    /// Tell `win_delegate` the phase the window is in now, if it changed.
+    private func updatePhase() {
+        let phase = currentPhase
+        guard phase != self.phase else { return }
+        self.phase = phase
+        switch phase {
+        case .active: win_delegate?.on_phase_active()
+        case .inactive: win_delegate?.on_phase_inactive()
+        case .background: win_delegate?.on_phase_background()
+        }
+    }
+
+    @objc private func appHiddenChanged(_ notification: Notification) {
+        updatePhase()
     }
     
     public override func mouseDown(with event: NSEvent) {
@@ -203,7 +246,13 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     }
 
     public func windowDidMiniaturize(_ notification: Notification) {
-        
+        isInDock = true
+        updatePhase()
+    }
+
+    public func windowDidDeminiaturize(_ notification: Notification) {
+        isInDock = false
+        updatePhase()
     }
     
     public func windowDidBecomeKey(_ notification: Notification) {
