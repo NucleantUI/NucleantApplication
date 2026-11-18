@@ -20,6 +20,9 @@ public protocol WindowTouchDelegate: AnyObject {
     func touchCancelled(id: Int, location: CGPoint)
     func keyDown(key: UInt16, chars: String?)
     func keyUp(key: UInt16, chars: String?)
+    /// The on-screen keyboard was put away from the keyboard itself (iPad's
+    /// dismiss key), not by `textInputKind`, which is `.none` now.
+    func keyboardDismissed()
 }
 
 extension NucleantWindow where Self: WindowTouchDelegate {
@@ -48,5 +51,8 @@ extension NucleantWindow where Self: WindowTouchDelegate {
     public func keyUp(key: UInt16, chars: String?) {
         on_key_up(keyCode: key, characters: chars)
     }
+
+    /// Nothing, unless the window does something about it.
+    public func keyboardDismissed() {}
 }
 #endif
