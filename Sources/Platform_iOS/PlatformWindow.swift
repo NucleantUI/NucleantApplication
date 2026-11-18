@@ -33,6 +33,9 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     private let vulkanView: VulkanView
     private let rootVC: UIViewController
 
+    /// What the on-screen keyboard types into, while text is entered.
+    private let textInputView = TextInputView<WindowBase>()
+
     private var displayLink: CADisplayLink?
 
     /// Per-window stable touch ids: UIKit hands out UITouch objects, not
@@ -52,6 +55,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         super.init(frame: frame)
         vc.view = view
         self.rootViewController = vc
+        addTextInputView()
         startDisplayLink()
         followPhases(of: nil)
     }
@@ -71,6 +75,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         self.frame = bounds
         vc.view = view
         self.rootViewController = vc
+        addTextInputView()
         startDisplayLink()
         followPhases(of: windowScene)
     }
@@ -180,7 +185,172 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     @objc private func cadlTick(_ link: CADisplayLink) {
         let dt = lastTickTimestamp.map { link.timestamp - $0 } ?? (link.targetTimestamp - link.timestamp)
         lastTickTimestamp = link.timestamp
+        repeatHeldKey(at: link.timestamp)
         win_delegate?.onFrame(dt)
+    }
+
+    // MARK: - Keys
+
+    /// The window takes the hardware keyboard's presses whenever no text is
+    /// being entered, so keys reach the delegate with nothing focused too.
+    public override var canBecomeFirstResponder: Bool { true }
+
+    public override func becomeKey() {
+        super.becomeKey()
+        takeKeys()
+    }
+
+    /// The modifier keys held as of the last key press or release, from
+    /// its event: `keyDown`/`keyUp` carry none, and a delegate reading this
+    /// while one is delivered gets that press's. Empty while text from the
+    /// on-screen keyboard is delivered.
+    public private(set) var keyModifierFlags: UIKeyModifierFlags = []
+
+    /// The key pressed last and still held, and when it repeats next.
+    /// UIKit reports a press once, however long it is held, so the window
+    /// repeats it itself from the display link, as macOS's key repeat does.
+    private var heldKey: (keyCode: UInt16, characters: String?, next: CFTimeInterval)?
+
+    private static var keyRepeatDelay: CFTimeInterval { 0.4 }
+    private static var keyRepeatInterval: CFTimeInterval { 0.08 }
+
+    public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = pressKeys(presses, with: event)
+        if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+    }
+
+    public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = releaseKeys(presses, with: event)
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+
+    public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = releaseKeys(presses, with: event)
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+    }
+
+    /// Tell the delegate of each key in `presses` going down; the presses
+    /// with no key (a remote's buttons), for UIKit.
+    func pressKeys(_ presses: Set<UIPress>, with event: UIPressesEvent?) -> Set<UIPress> {
+        if let event { keyModifierFlags = event.modifierFlags }
+        var rest: Set<UIPress> = []
+        for press in presses {
+            guard let key = press.key else {
+                rest.insert(press)
+                continue
+            }
+            guard !key.keyCode.isModifier else { continue }
+            let keyCode = key.keyCode.windowKeyCode
+            let characters = Self.characters(of: key)
+            heldKey = (keyCode, characters, CACurrentMediaTime() + Self.keyRepeatDelay)
+            win_delegate?.keyDown(key: keyCode, chars: characters)
+        }
+        return rest
+    }
+
+    /// Tell the delegate of each key in `presses` going up; the presses
+    /// with no key, for UIKit.
+    func releaseKeys(_ presses: Set<UIPress>, with event: UIPressesEvent?) -> Set<UIPress> {
+        if let event { keyModifierFlags = event.modifierFlags }
+        var rest: Set<UIPress> = []
+        for press in presses {
+            guard let key = press.key else {
+                rest.insert(press)
+                continue
+            }
+            guard !key.keyCode.isModifier else { continue }
+            let keyCode = key.keyCode.windowKeyCode
+            if heldKey?.keyCode == keyCode { heldKey = nil }
+            win_delegate?.keyUp(key: keyCode, chars: Self.characters(of: key))
+        }
+        return rest
+    }
+
+    /// What `key` types, as the other platforms report it: nil for a key
+    /// that types nothing, which UIKit names instead ("UIKeyInputLeftArrow").
+    private static func characters(of key: UIKey) -> String? {
+        let characters = key.characters
+        return characters.isEmpty || characters.hasPrefix("UIKeyInput") ? nil : characters
+    }
+
+    /// The held key's next repeat, once it is due.
+    private func repeatHeldKey(at time: CFTimeInterval) {
+        guard let held = heldKey, time >= held.next else { return }
+        heldKey?.next = time + Self.keyRepeatInterval
+        win_delegate?.keyDown(key: held.keyCode, chars: held.characters)
+    }
+
+    // MARK: - On-screen keyboard
+
+    /// The text the view with the keys takes, which decides the on-screen
+    /// keyboard: up for a field, down for anything else. Kept apart from the
+    /// UI layer's own name for it.
+    public enum TextInputKind {
+        /// Nothing focused takes text: no keyboard.
+        case none
+        /// A one-line field.
+        case singleLine
+        /// A text editor.
+        case multiLine
+    }
+
+    private var shownTextInput = TextInputKind.none
+
+    /// What the on-screen keyboard is up for. Anything but `.none` puts it
+    /// up, `.none` puts it away. It goes back to `.none` by itself when the
+    /// keyboard is put away from the keyboard (iPad's dismiss key), and the
+    /// delegate is told (`keyboardDismissed`).
+    ///
+    /// A hardware keyboard keeps the on-screen one down either way; its keys
+    /// reach the delegate as presses all the same.
+    public var textInputKind: TextInputKind {
+        get { shownTextInput }
+        set {
+            guard newValue != shownTextInput else { return }
+            shownTextInput = newValue
+            takeKeys()
+        }
+    }
+
+    /// Make the responder for what is entered now first: the text-input
+    /// view while text is — which is what puts the keyboard up — and the
+    /// window otherwise, which puts it away.
+    private func takeKeys() {
+        if shownTextInput == .none {
+            _ = becomeFirstResponder()
+        } else {
+            _ = textInputView.becomeFirstResponder()
+        }
+    }
+
+    private func addTextInputView() {
+        textInputView.platformWindow = self
+        vulkanView.addSubview(textInputView)
+    }
+
+    /// Text typed on the on-screen keyboard, as presses with no modifiers.
+    func typeText(_ presses: [(keyCode: UInt16, characters: String?)]) {
+        let flags = keyModifierFlags
+        keyModifierFlags = []
+        defer { keyModifierFlags = flags }
+        for press in presses {
+            win_delegate?.keyDown(key: press.keyCode, chars: press.characters)
+            win_delegate?.keyUp(key: press.keyCode, chars: press.characters)
+        }
+    }
+
+    /// The text-input view gave up first responder. Asked for when nothing
+    /// takes text any more; otherwise it is the keyboard put away from the
+    /// keyboard, so the keys come back to the window and the delegate hears.
+    func textInputViewResigned() {
+        guard shownTextInput != .none else { return }
+        shownTextInput = .none
+        // After UIKit is done handing first responder over.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.shownTextInput == .none, !self.isFirstResponder else { return }
+            _ = self.becomeFirstResponder()
+        }
+        win_delegate?.keyboardDismissed()
     }
 
     // MARK: - Touch input
