@@ -3,8 +3,9 @@
 //  NucleantApplicationTests
 //
 //  Platform_iOS (iOS only): the phase a window tells its delegate as its
-//  scene, or the app, goes to the background and back; and the keys it
-//  tells it, from a hardware keyboard and from the on-screen one.
+//  scene, or the app, goes to the background and back; the keys it tells
+//  it, from a hardware keyboard and from the on-screen one; and how much of
+//  the window the on-screen keyboard covers.
 //
 //  The test process is not an app — it has no `UIApplication` and connects
 //  no scenes — so UIKit's notifications are posted by hand, as UIKit posts
@@ -202,7 +203,146 @@ struct IOSKeyTests {
     }
 }
 
-/// Notes each key press and release, and the keyboard put away.
+@Suite(.serialized)
+@MainActor
+struct IOSKeyboardHeightTests {
+
+    /// A 160 × 120 window at `origin` on its screen, with a delegate.
+    private func makeWindow(at origin: CGPoint = .zero) throws -> (PlatformWindow<KeyRecordingWindow>, KeyRecordingWindow, UIScreen) {
+        let window = PlatformWindow<KeyRecordingWindow>(frame: CGRect(origin: origin, size: CGSize(width: 160, height: 120)))
+        let delegate = KeyRecordingWindow()
+        window.win_delegate = delegate
+        let screen = try #require(window.windowScene?.screen)
+        return (window, delegate, screen)
+    }
+
+    /// The keyboard, in screen coordinates, with its top edge at `top`.
+    private func keyboard(top: CGFloat) -> CGRect {
+        CGRect(x: 0, y: top, width: 400, height: 300)
+    }
+
+    /// A keyboard notification as UIKit posts it: its values are
+    /// `NSNumber`s, and its object is the keyboard's screen.
+    private func post(
+        _ name: Notification.Name, frame: CGRect?, screen: UIScreen?,
+        duration: Double = 0.25, curve: Int = 7, isLocal: Bool = true
+    ) {
+        var info: [AnyHashable: Any] = [
+            UIResponder.keyboardAnimationDurationUserInfoKey: NSNumber(value: duration),
+            UIResponder.keyboardAnimationCurveUserInfoKey: NSNumber(value: curve),
+            UIResponder.keyboardIsLocalUserInfoKey: NSNumber(value: isLocal),
+        ]
+        if let frame { info[UIResponder.keyboardFrameEndUserInfoKey] = NSValue(cgRect: frame) }
+        NotificationCenter.default.post(name: name, object: screen, userInfo: info)
+    }
+
+    /// The height is told before the keyboard moves, with the keyboard's
+    /// own animation: its curve, 7, is one UIKit has no case for.
+    @Test func aKeyboardComingUpIsToldWithItsAnimation() throws {
+        let (window, delegate, screen) = try makeWindow()
+        #expect(window.keyboardHeight == 0)
+
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen)
+        #expect(delegate.take() == ["keyboard 40.0 0.25 7"])
+        #expect(window.keyboardHeight == 40)
+    }
+
+    @Test func aKeyboardGoingAwayCoversNothing() throws {
+        let (window, delegate, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen)
+        _ = delegate.take()
+
+        post(UIResponder.keyboardWillHideNotification, frame: keyboard(top: screen.bounds.maxY), screen: screen, duration: 0.3)
+        #expect(delegate.take() == ["keyboard 0.0 0.3 7"])
+        #expect(window.keyboardHeight == 0)
+    }
+
+    /// UIKit posts a show and a frame change for one keyboard coming up,
+    /// and a frame change and a hide for one going away.
+    @Test func aHeightIsToldOnce() throws {
+        let (_, delegate, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen)
+        post(UIResponder.keyboardWillChangeFrameNotification, frame: keyboard(top: 80), screen: screen)
+        #expect(delegate.take() == ["keyboard 40.0 0.25 7"])
+
+        let below = keyboard(top: screen.bounds.maxY)
+        post(UIResponder.keyboardWillChangeFrameNotification, frame: below, screen: screen)
+        post(UIResponder.keyboardWillHideNotification, frame: below, screen: screen)
+        #expect(delegate.take() == ["keyboard 0.0 0.25 7"])
+    }
+
+    @Test func aKeyboardMovingIsToldWhereTo() throws {
+        let (_, delegate, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen)
+        post(UIResponder.keyboardWillChangeFrameNotification, frame: keyboard(top: 60), screen: screen, duration: 0)
+        #expect(delegate.take() == ["keyboard 40.0 0.25 7", "keyboard 60.0 0.0 7"])
+    }
+
+    /// iPad's floating keyboard has no frame to keep out of.
+    @Test func aKeyboardWithAnEmptyFrameCoversNothing() throws {
+        let (_, delegate, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen)
+        _ = delegate.take()
+
+        post(UIResponder.keyboardWillChangeFrameNotification, frame: .zero, screen: screen)
+        #expect(delegate.take() == ["keyboard 0.0 0.25 7"])
+    }
+
+    @Test func aKeyboardBelowTheWindowCoversNothing() throws {
+        let (window, delegate, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 200), screen: screen)
+        #expect(delegate.take().isEmpty)
+        #expect(window.keyboardHeight == 0)
+    }
+
+    /// The height is in the window's points, from its own bottom edge.
+    @Test func theHeightIsTheWindows() throws {
+        let (window, delegate, screen) = try makeWindow(at: CGPoint(x: 0, y: 100))
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 180), screen: screen)
+        #expect(delegate.take() == ["keyboard 40.0 0.25 7"])
+        #expect(window.keyboardHeight == 40)
+    }
+
+    /// A keyboard's top edge 39.9 points up the window is 40, on any of
+    /// the screen scales: rounded to the pixel.
+    @Test func theHeightIsRoundedToThePixel() throws {
+        let (window, _, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80.1), screen: screen)
+        #expect(window.keyboardHeight == 40)
+    }
+
+    /// Before iOS 16.1 a keyboard notification has no object: the
+    /// keyboard is on the window's screen.
+    @Test func aKeyboardWithoutItsScreenIsOnTheWindows() throws {
+        let (window, _, _) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: nil)
+        #expect(window.keyboardHeight == 40)
+    }
+
+    /// On iPhone another app's keyboard is not over this one; on iPad, in
+    /// split view, it is.
+    @Test func anotherAppsKeyboardCoversTheWindowOnlyOnIPad() throws {
+        let (window, _, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen, isLocal: false)
+        #expect(window.keyboardHeight == (UIDevice.current.userInterfaceIdiom == .phone ? 0 : 40))
+    }
+
+    /// The window changing size under a keyboard that stays put: the new
+    /// height, at once.
+    @Test func aWindowOfAnotherSizeUnderTheKeyboard() throws {
+        let (window, delegate, screen) = try makeWindow()
+        post(UIResponder.keyboardWillShowNotification, frame: keyboard(top: 80), screen: screen)
+        _ = delegate.take()
+
+        window.frame = CGRect(x: 0, y: 0, width: 160, height: 150)
+        window.layoutIfNeeded()
+        #expect(delegate.take() == ["keyboard 70.0 0.0 \(UIView.AnimationCurve.linear.rawValue)"])
+        #expect(window.keyboardHeight == 70)
+    }
+}
+
+/// Notes each key press and release, the keyboard put away, and how much
+/// of the window it covers.
 final class KeyRecordingWindow: NucleantWindow, WindowTouchDelegate {
     var renderEngine: VulkanRenderEngine<PhaseTestSlot>?
     var win_rect: SIMD4<Int> = .init(0, 0, 160, 120)
@@ -223,6 +363,10 @@ final class KeyRecordingWindow: NucleantWindow, WindowTouchDelegate {
     }
 
     func keyboardDismissed() { events.append("dismissed") }
+
+    func keyboardHeightChanged(_ height: CGFloat, duration: TimeInterval, curve: UIView.AnimationCurve) {
+        events.append("keyboard \(height) \(duration) \(curve.rawValue)")
+    }
 
     func present() throws {}
     func onFrame(_ dt: Double) {}
