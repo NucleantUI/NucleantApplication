@@ -23,6 +23,14 @@ public protocol WindowTouchDelegate: AnyObject {
     /// The on-screen keyboard was put away from the keyboard itself (iPad's
     /// dismiss key), not by `textInputKind`, which is `.none` now.
     func keyboardDismissed()
+    /// The part of the window the on-screen keyboard covers is about to
+    /// change: `height` is the new `keyboardHeight`, in points from the
+    /// window's bottom edge up. The keyboard gets there over `duration`
+    /// seconds on `curve`, its own animation, so whatever moves out of its
+    /// way can move with it. A curve can be one UIKit has no case for: the
+    /// keyboard's own is raw value 7. A change of the window's own size or
+    /// place, with the keyboard where it was, has a `duration` of 0.
+    func keyboardHeightChanged(_ height: CGFloat, duration: TimeInterval, curve: UIView.AnimationCurve)
 }
 
 extension NucleantWindow where Self: WindowTouchDelegate {
@@ -54,5 +62,8 @@ extension NucleantWindow where Self: WindowTouchDelegate {
 
     /// Nothing, unless the window does something about it.
     public func keyboardDismissed() {}
+
+    /// Nothing, unless the window does something about it.
+    public func keyboardHeightChanged(_ height: CGFloat, duration: TimeInterval, curve: UIView.AnimationCurve) {}
 }
 #endif

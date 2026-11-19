@@ -58,6 +58,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         addTextInputView()
         startDisplayLink()
         followPhases(of: nil)
+        followKeyboard()
     }
 
     /// Attaches to a real `UIWindowScene` instead of a bare frame — this is
@@ -78,6 +79,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         addTextInputView()
         startDisplayLink()
         followPhases(of: windowScene)
+        followKeyboard()
     }
 
     @available(*, unavailable)
@@ -101,6 +103,8 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     public override func layoutSubviews() {
         super.layoutSubviews()
         win_delegate?.on_size(w: Double(bounds.width), h: Double(bounds.height))
+        // The keyboard where it was, over a window of another size.
+        updateKeyboardHeight(duration: 0, curve: .linear)
     }
 
     // MARK: - Phase
@@ -351,6 +355,81 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
             _ = self.becomeFirstResponder()
         }
         win_delegate?.keyboardDismissed()
+    }
+
+    // MARK: - Keyboard height
+
+    /// How much of the window the on-screen keyboard covers, in points from
+    /// the window's bottom edge up, rounded to the pixel. 0 while it is down,
+    /// floating (iPad), on another screen or below the window.
+    ///
+    /// It changes when UIKit says the keyboard is about to move, before it
+    /// does, so the delegate (`keyboardHeightChanged`) can move things along
+    /// with it. It also changes when the window's size changes under a
+    /// keyboard that stays put.
+    public private(set) var keyboardHeight: CGFloat = 0
+
+    /// Where the keyboard is going, in its screen's coordinates, and that
+    /// screen, as UIKit last said. nil once it is going away.
+    private var keyboardFrame: (frame: CGRect, screen: UIScreen?)?
+
+    private func followKeyboard() {
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(keyboardWillMove(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardWillMove(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    /// The keyboard coming up, or moving: where to.
+    @objc private func keyboardWillMove(_ notification: Notification) {
+        guard let info = notification.userInfo else { return }
+        // On iPhone, another app's keyboard is not over this one.
+        if UIDevice.current.userInterfaceIdiom == .phone,
+           info[UIResponder.keyboardIsLocalUserInfoKey] as? Bool == false {
+            return
+        }
+        let frame = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        // The screen is the notification's object, since iOS 16.1.
+        keyboardFrame = frame.map { ($0, notification.object as? UIScreen) }
+        updateKeyboardHeight(animatedAs: notification)
+    }
+
+    /// The keyboard going away.
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardFrame = nil
+        updateKeyboardHeight(animatedAs: notification)
+    }
+
+    /// Update the keyboard height, moving as the keyboard does in
+    /// `notification`. A notification with no animation moves it at once.
+    private func updateKeyboardHeight(animatedAs notification: Notification) {
+        let info = notification.userInfo
+        let duration = info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
+        let curve = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int)
+            .flatMap(UIView.AnimationCurve.init(rawValue:)) ?? .linear
+        updateKeyboardHeight(duration: duration, curve: curve)
+    }
+
+    /// Measure the keyboard height again, and tell the delegate if it is new.
+    private func updateKeyboardHeight(duration: TimeInterval, curve: UIView.AnimationCurve) {
+        let height = keyboardOverlap
+        guard height != keyboardHeight else { return }
+        keyboardHeight = height
+        win_delegate?.keyboardHeightChanged(height, duration: duration, curve: curve)
+    }
+
+    /// From the window's bottom edge up to the keyboard's top edge, in the
+    /// window's points, rounded to the pixel. 0 for no keyboard, one with
+    /// an empty frame (iPad's floating keyboard), one on another screen, or
+    /// one below the window.
+    private var keyboardOverlap: CGFloat {
+        guard let keyboard = keyboardFrame, keyboard.frame.width > 0, keyboard.frame.height > 0,
+              let screen = keyboard.screen ?? windowScene?.screen else { return 0 }
+        if let windowScreen = windowScene?.screen, windowScreen !== screen { return 0 }
+        let top = convert(keyboard.frame, from: screen.coordinateSpace).minY
+        let scale = screen.scale
+        let overlap = ((bounds.maxY - top) * scale).rounded(.toNearestOrAwayFromZero) / scale
+        return max(0, overlap)
     }
 
     // MARK: - Touch input
