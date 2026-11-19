@@ -114,6 +114,8 @@ struct IOSKeyTests {
         let window = PlatformWindow<KeyRecordingWindow>(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
         let delegate = KeyRecordingWindow()
         window.win_delegate = delegate
+        // The safe area it was told as it was set.
+        _ = delegate.take()
         let input = try #require(window.rootViewController?.view.subviews.lazy.compactMap { $0 as? UIKeyInput }.first)
         return (window, delegate, input)
     }
@@ -212,6 +214,8 @@ struct IOSKeyboardHeightTests {
         let window = PlatformWindow<KeyRecordingWindow>(frame: CGRect(origin: origin, size: CGSize(width: 160, height: 120)))
         let delegate = KeyRecordingWindow()
         window.win_delegate = delegate
+        // The safe area it was told as it was set.
+        _ = delegate.take()
         let screen = try #require(window.windowScene?.screen)
         return (window, delegate, screen)
     }
@@ -341,8 +345,58 @@ struct IOSKeyboardHeightTests {
     }
 }
 
-/// Notes each key press and release, the keyboard put away, and how much
-/// of the window it covers.
+/// The window's safe area, told to its delegate. A window here is on the
+/// simulator's screen, at its top: UIKit gives it the safe area of the
+/// screen's top edge there (the sensor housing's, on a phone with one).
+@Suite(.serialized)
+@MainActor
+struct IOSSafeAreaTests {
+
+    private func told(_ insets: UIEdgeInsets) -> String {
+        "safe area \(insets.top) \(insets.left) \(insets.bottom) \(insets.right)"
+    }
+
+    /// A new delegate hears the safe area the window has, once, or nothing
+    /// for none.
+    @Test func aNewDelegateIsToldTheSafeArea() {
+        let window = PlatformWindow<KeyRecordingWindow>(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
+        let delegate = KeyRecordingWindow()
+        window.win_delegate = delegate
+        let insets = window.safeAreaInsets
+        #expect(delegate.take() == (insets == .zero ? [] : [told(insets)]))
+    }
+
+    @Test func anUnchangedSafeAreaIsNotToldAgain() {
+        let window = PlatformWindow<KeyRecordingWindow>(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
+        let delegate = KeyRecordingWindow()
+        window.win_delegate = delegate
+        _ = delegate.take()
+
+        window.safeAreaInsetsDidChange()
+        #expect(delegate.take().isEmpty)
+    }
+
+    /// Moved down, clear of the screen's top edge, the window has a safe
+    /// area of its own again.
+    @Test func aWindowMovedOnScreenIsToldItsNewSafeArea() throws {
+        let window = PlatformWindow<KeyRecordingWindow>(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
+        let delegate = KeyRecordingWindow()
+        window.win_delegate = delegate
+        let before = window.safeAreaInsets
+        _ = delegate.take()
+
+        window.frame = CGRect(x: 0, y: 300, width: 160, height: 120)
+        window.layoutIfNeeded()
+        let after = window.safeAreaInsets
+        if before.top > 0 {
+            #expect(after.top == 0, "clear of the top edge")
+        }
+        #expect(delegate.take() == (after == before ? [] : [told(after)]))
+    }
+}
+
+/// Notes each key press and release, the keyboard put away, how much of
+/// the window it covers, and the window's safe area.
 final class KeyRecordingWindow: NucleantWindow, WindowTouchDelegate {
     var renderEngine: VulkanRenderEngine<PhaseTestSlot>?
     var win_rect: SIMD4<Int> = .init(0, 0, 160, 120)
@@ -366,6 +420,10 @@ final class KeyRecordingWindow: NucleantWindow, WindowTouchDelegate {
 
     func keyboardHeightChanged(_ height: CGFloat, duration: TimeInterval, curve: UIView.AnimationCurve) {
         events.append("keyboard \(height) \(duration) \(curve.rawValue)")
+    }
+
+    func safeAreaInsetsChanged(_ insets: UIEdgeInsets) {
+        events.append("safe area \(insets.top) \(insets.left) \(insets.bottom) \(insets.right)")
     }
 
     func present() throws {}

@@ -25,9 +25,14 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     /// Told the phase the window is in as soon as it is set: a window can be
     /// built while its scene, or the app, is not active yet — or in the
     /// background, for an app launched there — and no notification would
-    /// say so until the next change.
+    /// say so until the next change. Told the safe area too, when the
+    /// window already has one.
     public weak var win_delegate: WindowBase? {
-        didSet { enter(currentPhase) }
+        didSet {
+            enter(currentPhase)
+            toldSafeAreaInsets = .zero
+            tellSafeArea()
+        }
     }
 
     private let vulkanView: VulkanView
@@ -105,6 +110,30 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         win_delegate?.on_size(w: Double(bounds.width), h: Double(bounds.height))
         // The keyboard where it was, over a window of another size.
         updateKeyboardHeight(duration: 0, curve: .linear)
+    }
+
+    // MARK: - Safe area
+
+    /// The safe area `win_delegate` was last told; a new one starts out
+    /// with none.
+    private var toldSafeAreaInsets = UIEdgeInsets.zero
+
+    /// UIKit changed the window's safe area: the device turned, the status
+    /// bar came or went, the window moved on screen.
+    public override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        tellSafeArea()
+    }
+
+    /// Tell the delegate the safe area, if it hasn't been told this one.
+    /// Reading it can make UIKit work it out, and call
+    /// `safeAreaInsetsDidChange` from inside the read: that one tells, and
+    /// this one then finds nothing new.
+    private func tellSafeArea() {
+        let insets = safeAreaInsets
+        guard insets != toldSafeAreaInsets, let win_delegate else { return }
+        toldSafeAreaInsets = insets
+        win_delegate.safeAreaInsetsChanged(insets)
     }
 
     // MARK: - Phase

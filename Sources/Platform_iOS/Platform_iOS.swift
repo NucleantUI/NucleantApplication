@@ -31,6 +31,11 @@ public protocol WindowTouchDelegate: AnyObject {
     /// keyboard's own is raw value 7. A change of the window's own size or
     /// place, with the keyboard where it was, has a `duration` of 0.
     func keyboardHeightChanged(_ height: CGFloat, duration: TimeInterval, curve: UIView.AnimationCurve)
+    /// The window's safe area changed: `insets` is the window's
+    /// `safeAreaInsets` now, in points — what the status bar, the sensor
+    /// housing, the home indicator and the rounded corners keep from its
+    /// edges. Told as soon as the delegate is set, when they aren't zero.
+    func safeAreaInsetsChanged(_ insets: UIEdgeInsets)
 }
 
 extension NucleantWindow where Self: WindowTouchDelegate {
@@ -65,5 +70,8 @@ extension NucleantWindow where Self: WindowTouchDelegate {
 
     /// Nothing, unless the window does something about it.
     public func keyboardHeightChanged(_ height: CGFloat, duration: TimeInterval, curve: UIView.AnimationCurve) {}
+
+    /// Nothing, unless the window does something about it.
+    public func safeAreaInsetsChanged(_ insets: UIEdgeInsets) {}
 }
 #endif
