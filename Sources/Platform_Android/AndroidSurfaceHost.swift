@@ -86,6 +86,55 @@ public enum AndroidSurfaceHost {
     /// polled for the same reason `firstFrameRendered` is.
     public nonisolated(unsafe) static var textInputKind: TextInputKind = .none
 
+    // MARK: - Keyboard height and safe area
+
+    /// How much of the window the soft keyboard covers, in points from the
+    /// window's bottom edge up. 0 while it is down.
+    public static var keyboardHeight: Double {
+        Double(keyboardPixels) / displayScale
+    }
+
+    /// Called when `keyboardHeight` changes, on the UI thread, with the
+    /// seconds the keyboard takes to get there: 0 when it is there already,
+    /// or when it follows a gesture (Back pulling it down) and is told
+    /// again on every frame of it.
+    public nonisolated(unsafe) static var onKeyboardHeightChanged: ((_ duration: Double) -> Void)?
+
+    /// What the system bars and the display cutout keep clear at the
+    /// window's edges, in points. Nothing at an edge with neither: the bars
+    /// are hidden while the app is in front, so the cutout is what is left.
+    public static var safeAreaInsets: (left: Double, top: Double, right: Double, bottom: Double) {
+        let scale = displayScale
+        return (
+            left: Double(safeAreaPixels.left) / scale,
+            top: Double(safeAreaPixels.top) / scale,
+            right: Double(safeAreaPixels.right) / scale,
+            bottom: Double(safeAreaPixels.bottom) / scale
+        )
+    }
+
+    /// Called when `safeAreaInsets` changes, on the UI thread.
+    public nonisolated(unsafe) static var onSafeAreaInsetsChanged: (() -> Void)?
+
+    /// Both kept in pixels, as the window's insets have them, and turned
+    /// into points when read: the Activity reports them from its first
+    /// layout on, which can come before it sends the display scale.
+    private nonisolated(unsafe) static var keyboardPixels = 0
+    private nonisolated(unsafe) static var safeAreaPixels = (left: 0, top: 0, right: 0, bottom: 0)
+
+    static func setKeyboardHeight(pixels: Int, duration: Double) {
+        guard pixels != keyboardPixels else { return }
+        keyboardPixels = pixels
+        onKeyboardHeightChanged?(duration)
+    }
+
+    static func setSafeAreaInsets(left: Int, top: Int, right: Int, bottom: Int) {
+        let insets = (left: left, top: top, right: right, bottom: bottom)
+        guard insets != safeAreaPixels else { return }
+        safeAreaPixels = insets
+        onSafeAreaInsetsChanged?()
+    }
+
     // MARK: - Appearance
 
     /// Whether the system is in dark mode — `Configuration.uiMode`'s night

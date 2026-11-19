@@ -1,6 +1,8 @@
 package org.nucleantui;
 
 import android.content.Context;
+import android.graphics.Insets;
+import android.os.Build;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.Selection;
@@ -8,10 +10,13 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.WindowInsets;
+import android.view.WindowInsetsAnimation;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
+import java.util.List;
 
 /**
  * The render surface, and the app's input.
@@ -34,6 +39,122 @@ public class NucleantSurfaceView extends SurfaceView implements SurfaceHolder.Ca
         // Input goes through this view, so it has to be able to take focus.
         setFocusable(true);
         setFocusableInTouchMode(true);
+        followInsets();
+    }
+
+    // ── Keyboard height and safe area ────────────────────────────────────────
+
+    /**
+     * What covers the window, sent to Swift as it changes: the soft keyboard,
+     * from the window's bottom edge up, and the system bars and the display
+     * cutout at its edges, the safe area. In pixels, from the window's
+     * insets.
+     *
+     * <p>The window keeps its size under all of them (see
+     * {@link NucleantActivity#onCreate}); the app lays itself out clear of
+     * them instead. From API 30, which has the insets by type.
+     */
+    private void followInsets() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        setOnApplyWindowInsetsListener((view, insets) -> {
+            applyInsets(insets);
+            return insets;
+        });
+        setWindowInsetsAnimationCallback(new KeyboardAnimation());
+    }
+
+    /** The keyboard height Swift was last sent, in pixels. */
+    private int keyboardHeight = 0;
+    /** Where the window's insets last had the keyboard: where it is, or where an animation is taking it. */
+    private int keyboardTarget = 0;
+    /**
+     * The keyboard is moving. Its new height is sent when the animation
+     * starts, with the animation's duration, rather than when the insets
+     * change, which is before it.
+     */
+    private boolean keyboardAnimating = false;
+    /**
+     * The animation has no duration: the keyboard follows a gesture, such as
+     * Back pulling it down, so its height is sent on every frame of it.
+     */
+    private boolean keyboardFollowing = false;
+
+    private void applyInsets(WindowInsets insets) {
+        Insets safeArea = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+        NucleantBridge.nucleantSetSafeAreaInsets(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom);
+        keyboardTarget = insets.getInsets(WindowInsets.Type.ime()).bottom;
+        if (!keyboardAnimating) {
+            sendKeyboardHeight(keyboardTarget, 0);
+        }
+    }
+
+    private void sendKeyboardHeight(int height, double duration) {
+        if (height == keyboardHeight) {
+            return;
+        }
+        keyboardHeight = height;
+        NucleantBridge.nucleantSetKeyboardHeight(height, duration);
+    }
+
+    /**
+     * The keyboard coming up or going down. The system calls these in order:
+     * {@code onPrepare}, then the window's insets as they will be at the end,
+     * then {@code onStart}, {@code onProgress} for every frame, and
+     * {@code onEnd}.
+     */
+    private final class KeyboardAnimation extends WindowInsetsAnimation.Callback {
+        KeyboardAnimation() {
+            super(DISPATCH_MODE_STOP);
+        }
+
+        private boolean movesKeyboard(WindowInsetsAnimation animation) {
+            return (animation.getTypeMask() & WindowInsets.Type.ime()) != 0;
+        }
+
+        @Override
+        public void onPrepare(WindowInsetsAnimation animation) {
+            if (movesKeyboard(animation)) {
+                keyboardAnimating = true;
+            }
+        }
+
+        @Override
+        public WindowInsetsAnimation.Bounds onStart(WindowInsetsAnimation animation, WindowInsetsAnimation.Bounds bounds) {
+            if (movesKeyboard(animation)) {
+                long duration = animation.getDurationMillis();
+                if (duration > 0) {
+                    sendKeyboardHeight(keyboardTarget, duration / 1000.0);
+                } else {
+                    keyboardFollowing = true;
+                }
+            }
+            return bounds;
+        }
+
+        @Override
+        public WindowInsets onProgress(WindowInsets insets, List<WindowInsetsAnimation> running) {
+            if (keyboardFollowing) {
+                sendKeyboardHeight(insets.getInsets(WindowInsets.Type.ime()).bottom, 0);
+            }
+            return insets;
+        }
+
+        @Override
+        public void onEnd(WindowInsetsAnimation animation) {
+            if (!movesKeyboard(animation)) {
+                return;
+            }
+            keyboardAnimating = false;
+            keyboardFollowing = false;
+            // Where it ended up: a gesture let go of halfway puts it back.
+            WindowInsets insets = getRootWindowInsets();
+            if (insets != null) {
+                keyboardTarget = insets.getInsets(WindowInsets.Type.ime()).bottom;
+            }
+            sendKeyboardHeight(keyboardTarget, 0);
+        }
     }
 
     @Override
