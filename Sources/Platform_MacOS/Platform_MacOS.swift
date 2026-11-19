@@ -78,6 +78,8 @@ extension NucleantWindow where Self: WindowBaseDelegate {
 
 public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where WindowBase: NucleantWindow & WindowBaseDelegate {
     
+    /// Called as the window closes — its close button, File › Close,
+    /// `close()` — once its display link has stopped.
     public var on_close:            (()->Void)?
 
     public weak var win_delegate: WindowBase?
@@ -258,6 +260,14 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
     public func windowDidBecomeKey(_ notification: Notification) {
         
     }
+
+    /// Closed, the window draws no more frames: the display link stops,
+    /// and lets go of the window it held as its target.
+    public func windowWillClose(_ notification: Notification) {
+        caDisplayLink?.invalidate()
+        caDisplayLink = nil
+        on_close?()
+    }
     
     public func startDisplayLink() {
         if #available(macOS 14.0, *) {
@@ -274,9 +284,14 @@ public final class PlatformWindow<WindowBase>: NSWindow, NSWindowDelegate where 
         }
     }
     
+    /// The running display link, held to stop it when the window closes.
+    /// It holds the window, its target, until then.
+    private var caDisplayLink: CADisplayLink?
+
     func startCADisplayLink() {
         let link = displayLink(target: self, selector: #selector(cadlTick(_:)))
         link.add(to: .main, forMode: .common)
+        caDisplayLink = link
     }
 
     /// The previous tick's display-link timestamp.
