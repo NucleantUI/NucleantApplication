@@ -84,6 +84,25 @@ public func nucleantTextInputKind() -> Int32 {
     Platform_Android.nucleantTextInputKind()
 }
 
+// MARK: - System bars
+//
+// `NucleantActivity` polls these after every frame.
+
+/// Whether the status bar should be hidden.
+public func nucleantStatusBarHidden() -> Bool {
+    Platform_Android.nucleantStatusBarHidden()
+}
+
+/// Whether the navigation bar should be hidden.
+public func nucleantNavigationBarHidden() -> Bool {
+    Platform_Android.nucleantNavigationBarHidden()
+}
+
+/// Whether the bars are over a light window, and draw their icons dark.
+public func nucleantLightSystemBars() -> Bool {
+    Platform_Android.nucleantLightSystemBars()
+}
+
 // MARK: - Keyboard height and safe area
 //
 // `NucleantSurfaceView` sends both from the window's insets as they change.

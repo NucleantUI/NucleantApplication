@@ -332,5 +332,27 @@ public final class PlatformWindow<WindowBase>: @unchecked Sendable
         get { AndroidSurfaceHost.textInputKind }
         set { AndroidSurfaceHost.textInputKind = newValue }
     }
+
+    // MARK: - System bars
+
+    /// Whether the status bar is hidden. The Activity reads it after every
+    /// frame and hides or shows the bar to match; the safe area follows,
+    /// from the window's insets.
+    public var statusBarHidden: Bool {
+        get { AndroidSurfaceHost.statusBarHidden }
+        set { AndroidSurfaceHost.statusBarHidden = newValue }
+    }
+
+    /// Whether the navigation bar is hidden, read the same way.
+    public var navigationBarHidden: Bool {
+        get { AndroidSurfaceHost.navigationBarHidden }
+        set { AndroidSurfaceHost.navigationBarHidden = newValue }
+    }
+
+    /// Whether the bars are over a light window, and draw their icons dark.
+    public var lightSystemBars: Bool {
+        get { AndroidSurfaceHost.lightSystemBars }
+        set { AndroidSurfaceHost.lightSystemBars = newValue }
+    }
 }
 #endif

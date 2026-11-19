@@ -173,6 +173,26 @@ public func nucleantTextInputKind() -> Int32 {
     AndroidSurfaceHost.textInputKind.rawValue
 }
 
+// MARK: - System bars
+//
+// Polled by the Activity after every frame, like `nucleantTextInputKind`.
+
+/// Whether the status bar should be hidden.
+public func nucleantStatusBarHidden() -> Bool {
+    AndroidSurfaceHost.statusBarHidden
+}
+
+/// Whether the navigation bar should be hidden.
+public func nucleantNavigationBarHidden() -> Bool {
+    AndroidSurfaceHost.navigationBarHidden
+}
+
+/// Whether the bars are over a light window: `APPEARANCE_LIGHT_STATUS_BARS`
+/// and `APPEARANCE_LIGHT_NAVIGATION_BARS`, which draw their icons dark.
+public func nucleantLightSystemBars() -> Bool {
+    AndroidSurfaceHost.lightSystemBars
+}
+
 // MARK: - Keyboard height and safe area
 
 /// How much of the window the soft keyboard covers, in pixels from its bottom
