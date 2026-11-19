@@ -112,6 +112,8 @@ public abstract class NucleantActivity extends Activity {
                 // the soft keyboard follows. Asked rather than told — see
                 // NucleantSurfaceView.setTextInputKind.
                 surfaceView.setTextInputKind(NucleantBridge.nucleantTextInputKind());
+                // And the screen on top may want the system bars otherwise.
+                followSystemBars();
                 Choreographer.getInstance().postFrameCallback(this);
             }
         };
@@ -131,8 +133,8 @@ public abstract class NucleantActivity extends Activity {
 
         // Below API 30 (R) there is none of what follows: no insets by type,
         // no insets controller. There the window stays where the system puts
-        // it, between its bars, and the app is told no safe area and no
-        // keyboard height.
+        // it, between its bars, the app is told no safe area and no keyboard
+        // height, and the bars stay shown whatever it asks.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return;
         }
@@ -146,28 +148,75 @@ public abstract class NucleantActivity extends Activity {
         getWindow().setDecorFitsSystemWindows(false);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
-        // Fullscreen, and no system bars.
-        //
-        // The app draws its own chrome — a navigation bar with a back button
-        // of its own — so the status bar is not just redundant, it is in the
-        // way: edge-to-edge is the default from API 35, and the app's top row
-        // would otherwise render *underneath* the status bar. Visible, and
-        // unpressable, because the system owns those pixels for touch.
-        //
-        // Hidden rather than inset around: insetting works, but it gives the
-        // display's top and bottom strips away to bars the app has no use for.
-        // The bars stay available on a swipe, which is what
-        // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE means.
+        // The system bars are shown, over the window's edges, and the app
+        // lays itself out clear of them. It hides them when it asks — see
+        // followSystemBars. A hidden bar comes back for a moment on a swipe in
+        // from the edge, which is what BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        // means.
         //
         // After setContentView, not before: the controller belongs to the
         // window's DecorView, and that does not exist until there is content
         // in it — asking earlier throws.
         WindowInsetsController insets = getWindow().getInsetsController();
         if (insets != null) {
-            insets.hide(WindowInsets.Type.systemBars());
             insets.setSystemBarsBehavior(
                 WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
+    }
+
+    /** Whether the bars have been set from what the app asks yet. */
+    private boolean systemBarsSet = false;
+    private boolean statusBarHidden = false;
+    private boolean navigationBarHidden = false;
+    private boolean lightSystemBars = false;
+
+    /**
+     * Hide or show the status bar and the navigation bar as the app asks,
+     * with icons drawn for the window under them: dark over a light one.
+     *
+     * <p>Asked after every frame, like the soft keyboard, and changed only
+     * when the answer is new. The first answer is applied whole, whatever the
+     * theme started the bars as. Nothing below API 30 (see onCreate): the
+     * bars stay as the system has them.
+     */
+    private void followSystemBars() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        boolean statusBar = NucleantBridge.nucleantStatusBarHidden();
+        boolean navigationBar = NucleantBridge.nucleantNavigationBarHidden();
+        boolean light = NucleantBridge.nucleantLightSystemBars();
+        if (systemBarsSet && statusBar == statusBarHidden
+                && navigationBar == navigationBarHidden && light == lightSystemBars) {
+            return;
+        }
+        WindowInsetsController controller = getWindow().getInsetsController();
+        if (controller == null) {
+            return;
+        }
+        if (!systemBarsSet || statusBar != statusBarHidden) {
+            if (statusBar) {
+                controller.hide(WindowInsets.Type.statusBars());
+            } else {
+                controller.show(WindowInsets.Type.statusBars());
+            }
+        }
+        if (!systemBarsSet || navigationBar != navigationBarHidden) {
+            if (navigationBar) {
+                controller.hide(WindowInsets.Type.navigationBars());
+            } else {
+                controller.show(WindowInsets.Type.navigationBars());
+            }
+        }
+        if (!systemBarsSet || light != lightSystemBars) {
+            int lightBars = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            controller.setSystemBarsAppearance(light ? lightBars : 0, lightBars);
+        }
+        systemBarsSet = true;
+        statusBarHidden = statusBar;
+        navigationBarHidden = navigationBar;
+        lightSystemBars = light;
     }
 
     /**

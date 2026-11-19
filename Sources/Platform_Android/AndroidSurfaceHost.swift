@@ -86,6 +86,21 @@ public enum AndroidSurfaceHost {
     /// polled for the same reason `firstFrameRendered` is.
     public nonisolated(unsafe) static var textInputKind: TextInputKind = .none
 
+    // MARK: - System bars
+
+    /// Whether the window wants the status bar hidden. Set by the window on
+    /// the UI thread, read by the Activity on the same thread after each
+    /// frame, like `textInputKind`. A hidden bar comes back for a moment on
+    /// a swipe in from the edge.
+    public nonisolated(unsafe) static var statusBarHidden = false
+
+    /// Whether the window wants the navigation bar hidden, read the same way.
+    public nonisolated(unsafe) static var navigationBarHidden = false
+
+    /// Whether the bars are over a light window, and so draw their icons
+    /// dark. Read the same way.
+    public nonisolated(unsafe) static var lightSystemBars = false
+
     // MARK: - Keyboard height and safe area
 
     /// How much of the window the soft keyboard covers, in points from the
@@ -101,8 +116,8 @@ public enum AndroidSurfaceHost {
     public nonisolated(unsafe) static var onKeyboardHeightChanged: ((_ duration: Double) -> Void)?
 
     /// What the system bars and the display cutout keep clear at the
-    /// window's edges, in points. Nothing at an edge with neither: the bars
-    /// are hidden while the app is in front, so the cutout is what is left.
+    /// window's edges, in points. Nothing at an edge with neither: a bar
+    /// the window hides keeps nothing clear, and the cutout is what is left.
     public static var safeAreaInsets: (left: Double, top: Double, right: Double, bottom: Double) {
         let scale = displayScale
         return (

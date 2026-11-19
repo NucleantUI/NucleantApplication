@@ -36,7 +36,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     }
 
     private let vulkanView: VulkanView
-    private let rootVC: UIViewController
+    private let rootVC: RootViewController
 
     /// What the on-screen keyboard types into, while text is entered.
     private let textInputView = TextInputView<WindowBase>()
@@ -55,7 +55,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
     public override init(frame: CGRect) {
         let view = VulkanView(frame: frame)
         self.vulkanView = view
-        let vc = UIViewController()
+        let vc = RootViewController()
         self.rootVC = vc
         super.init(frame: frame)
         vc.view = view
@@ -75,7 +75,7 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         let bounds = windowScene.coordinateSpace.bounds
         let view = VulkanView(frame: bounds)
         self.vulkanView = view
-        let vc = UIViewController()
+        let vc = RootViewController()
         self.rootVC = vc
         super.init(windowScene: windowScene)
         self.frame = bounds
@@ -134,6 +134,22 @@ public final class PlatformWindow<WindowBase>: UIWindow, UIWindowSceneDelegate
         guard insets != toldSafeAreaInsets, let win_delegate else { return }
         toldSafeAreaInsets = insets
         win_delegate.safeAreaInsetsChanged(insets)
+    }
+
+    // MARK: - Status bar and Home indicator
+
+    /// Whether the status bar is hidden over the window. Only when the app's
+    /// Info.plist leaves it to view controllers — see `RootViewController`.
+    /// The safe area follows, through `safeAreaInsetsDidChange`.
+    public var statusBarHidden: Bool {
+        get { rootVC.statusBarHidden }
+        set { rootVC.statusBarHidden = newValue }
+    }
+
+    /// Whether the Home indicator stays out of sight until a touch near it.
+    public var homeIndicatorAutoHidden: Bool {
+        get { rootVC.homeIndicatorAutoHidden }
+        set { rootVC.homeIndicatorAutoHidden = newValue }
     }
 
     // MARK: - Phase
