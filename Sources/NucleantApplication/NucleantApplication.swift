@@ -8,6 +8,17 @@ public protocol NucleantApplication: AnyObject {
     func onStart()
     
     func setup()
+
+    /// Whether the app quits once its last window closes. `true` unless the
+    /// app says otherwise — one with an item in the system tray goes on
+    /// without windows. Asked on macOS.
+    var terminatesAfterLastWindowClosed: Bool { get }
+
+    /// Whether the app starts with its icon in the Dock and its menus in the
+    /// menu bar. `true` unless the app says otherwise — one that starts in
+    /// the system tray, with no window, starts without. Asked on macOS, in
+    /// `setup()`.
+    var showsDockIconAtLaunch: Bool { get }
     
     
     
@@ -21,6 +32,12 @@ public protocol NucleantApplication: AnyObject {
     // unambiguously.
     var appDelegate: AppDelegate<Self>? { get set }
     #endif
+}
+
+extension NucleantApplication {
+    public var terminatesAfterLastWindowClosed: Bool { true }
+
+    public var showsDockIconAtLaunch: Bool { true }
 }
 
 #if os(macOS) || os(iOS) || os(Linux) || os(Android) || os(WASI) || os(Windows)

@@ -171,7 +171,8 @@ public final class AppKitMenuBar: MenuBarHost {
 
     // MARK: - The app's items
 
-    private static func menu(_ menu: MenuBar.Menu) -> NSMenu {
+    /// An app menu, natively. The tray's menus are built the same way.
+    static func menu(_ menu: MenuBar.Menu) -> NSMenu {
         let native = NSMenu(title: menu.title)
         for item in menu.items {
             native.addItem(Self.item(item))
@@ -179,7 +180,7 @@ public final class AppKitMenuBar: MenuBarHost {
         return native
     }
 
-    private static func item(_ item: MenuBar.Item) -> NSMenuItem {
+    static func item(_ item: MenuBar.Item) -> NSMenuItem {
         switch item {
         case .divider:
             return .separator()
