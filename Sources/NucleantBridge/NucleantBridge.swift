@@ -84,6 +84,22 @@ public func nucleantTextInputKind() -> Int32 {
     Platform_Android.nucleantTextInputKind()
 }
 
+// MARK: - Keyboard height and safe area
+//
+// `NucleantSurfaceView` sends both from the window's insets as they change.
+
+/// How much of the window the soft keyboard covers, in pixels from its bottom
+/// edge up, and the seconds it takes to get there.
+public func nucleantSetKeyboardHeight(height: Int32, duration: Double) {
+    Platform_Android.nucleantSetKeyboardHeight(height: height, duration: duration)
+}
+
+/// What the system bars and the display cutout keep clear at the window's
+/// edges, in pixels.
+public func nucleantSetSafeAreaInsets(left: Int32, top: Int32, right: Int32, bottom: Int32) {
+    Platform_Android.nucleantSetSafeAreaInsets(left: left, top: top, right: right, bottom: bottom)
+}
+
 // MARK: - Appearance
 
 /// `Configuration.uiMode` is night — sent before the app starts and on every

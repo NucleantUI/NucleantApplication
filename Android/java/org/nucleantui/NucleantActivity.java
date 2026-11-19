@@ -2,6 +2,7 @@ package org.nucleantui;
 
 import android.app.Activity;
 import android.content.res.Configuration;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Choreographer;
 import android.view.WindowInsets;
@@ -127,6 +128,17 @@ public abstract class NucleantActivity extends Activity {
 
         surfaceView = new NucleantSurfaceView(this);
         setContentView(surfaceView);
+
+        // The window keeps its size whatever covers it (the system bars, the
+        // display cutout, the soft keyboard). The surface view is told what
+        // does, from the window's insets, and the app lays itself out clear
+        // of it. Edge to edge is the default from API 35; asked for here so
+        // API 30 to 34 do the same. ADJUST_RESIZE is what reports the
+        // keyboard as an inset, rather than panning the window up under it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+        }
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
         // Fullscreen, and no system bars.
         //

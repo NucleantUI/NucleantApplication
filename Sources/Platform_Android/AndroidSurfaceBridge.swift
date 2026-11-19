@@ -173,6 +173,22 @@ public func nucleantTextInputKind() -> Int32 {
     AndroidSurfaceHost.textInputKind.rawValue
 }
 
+// MARK: - Keyboard height and safe area
+
+/// How much of the window the soft keyboard covers, in pixels from its bottom
+/// edge up (the window's `ime()` inset), and the seconds it takes to get
+/// there: 0 when it is there already, or when it follows a gesture and is
+/// told again on every frame of it.
+public func nucleantSetKeyboardHeight(height: Int32, duration: Double) {
+    AndroidSurfaceHost.setKeyboardHeight(pixels: Int(height), duration: duration)
+}
+
+/// What the system bars and the display cutout keep clear at the window's
+/// edges, in pixels: the window's `systemBars() | displayCutout()` insets.
+public func nucleantSetSafeAreaInsets(left: Int32, top: Int32, right: Int32, bottom: Int32) {
+    AndroidSurfaceHost.setSafeAreaInsets(left: Int(left), top: Int(top), right: Int(right), bottom: Int(bottom))
+}
+
 // MARK: - Appearance
 
 /// Whether the system is in dark mode — from `Configuration.uiMode`.
