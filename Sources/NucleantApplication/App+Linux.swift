@@ -35,6 +35,12 @@ extension NucleantApplication {
         }
         try appDelegate.run()
     }
+
+    /// Quit: the event loop ends, so `run()` returns, with the app's tray
+    /// items taken out.
+    public func quit() {
+        appDelegate?.terminate()
+    }
 }
 
 /// Owns the Linux app lifecycle. The parallel of the `NSApplicationDelegate`
@@ -49,6 +55,9 @@ public final class AppDelegate<App: NucleantApplication> {
 
     /// Neither Wayland nor X11 has a menu bar to fill.
     public let menuBarHost = NoMenuBar()
+
+    /// The app's items in the desktop's tray, on the session bus.
+    public let trayHost = StatusNotifierTray()
 
     public init(app: App) {
         self.app = app
@@ -70,6 +79,9 @@ public final class AppDelegate<App: NucleantApplication> {
             app?.onStart()
             X11Display.shared.run()
         }
+        // Gone with the app, rather than when a host notices the bus
+        // connections closing.
+        trayHost.removeAll()
     }
 
     /// Ends the event loop, so a blocked `run()` returns. Windows are left

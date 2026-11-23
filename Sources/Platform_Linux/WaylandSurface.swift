@@ -23,6 +23,8 @@ protocol WaylandSurfaceHandler: AnyObject {
     func waylandSurfaceDidTick(dt: Double)
     func waylandSurfaceDidResize(width: Double, height: Double)
     func waylandSurfaceDidRequestClose()
+    /// The window lost the keys to another.
+    func waylandSurfaceDidDeactivate()
 
     func waylandPointerDown(at location: SIMD2<Double>)
     func waylandPointerUp(at location: SIMD2<Double>)
@@ -75,6 +77,13 @@ private func containsSizingState(_ states: UnsafeMutablePointer<wl_array>?) -> B
         }
     }
     return false
+}
+
+/// Whether an `xdg_toplevel.configure` state array contains `state`.
+private func containsState(_ state: UInt32, _ states: UnsafeMutablePointer<wl_array>?) -> Bool {
+    guard let states, let data = states.pointee.data else { return false }
+    let values = data.assumingMemoryBound(to: UInt32.self)
+    return (0..<states.pointee.size / MemoryLayout<UInt32>.size).contains { values[$0] == state }
 }
 
 /// The Wayland side of a window. `PlatformWindow` owns one of these and is
@@ -174,11 +183,27 @@ final class WaylandSurface {
 
     // MARK: - Init
 
-    init(width: Double, height: Double, title: String) throws {
+    /// A tray item's window: undecorated, and shown and hidden by the app
+    /// (`show()`, `hide()`). Wayland gives a client no say in where its
+    /// window goes, so the compositor places it.
+    let isTrayPanel: Bool
+
+    private var title: String
+
+    /// The compositor last said the window has the keys.
+    private var isActivated = false
+
+    /// Mapped, or about to be on its next buffer: the surface has its
+    /// toplevel role object.
+    var isMapped: Bool { xdgToplevel != nil }
+
+    init(width: Double, height: Double, title: String, isTrayPanel: Bool = false) throws {
         self.width = max(width, 1)
         self.height = max(height, 1)
         self.floatingWidth = self.width
         self.floatingHeight = self.height
+        self.isTrayPanel = isTrayPanel
+        self.title = title
 
         let display = WaylandDisplay.shared
         try display.connect()
@@ -186,7 +211,7 @@ final class WaylandSurface {
         guard let compositor = display.compositor else {
             throw WaylandError.missingGlobal("wl_compositor")
         }
-        guard let wmBase = display.wmBase else {
+        guard display.wmBase != nil else {
             throw WaylandError.missingGlobal("xdg_wm_base")
         }
         guard let surface = wl_compositor_create_surface(compositor) else {
@@ -199,32 +224,54 @@ final class WaylandSurface {
         listeners.surface = waylandListener(Self.makeSurfaceListener())
         wl_surface_add_listener(surface, listeners.surface, me)
 
-        // xdg-shell in two steps: xdg_surface adds the configure/ack
-        // handshake to a plain surface, and xdg_toplevel then says it's a
-        // top-level window rather than a popup.
+        display.register(self, for: surface)
+        try makeRole()
+    }
+
+    /// Gives the surface its toplevel role, and waits for the compositor to
+    /// configure it.
+    ///
+    /// xdg-shell in two steps: xdg_surface adds the configure/ack handshake
+    /// to a plain surface, and xdg_toplevel then says it's a top-level
+    /// window rather than a popup. Destroying the two unmaps the window
+    /// (`hide()`); making them again maps it once more, on its next buffer.
+    private func makeRole() throws {
+        let display = WaylandDisplay.shared
+        guard let wmBase = display.wmBase, let surface = handle else {
+            throw WaylandError.surfaceCreationFailed
+        }
+        let me = Unmanaged.passUnretained(self).toOpaque()
+
         guard let xdgSurface = xdg_wm_base_get_xdg_surface(wmBase, surface) else {
             throw WaylandError.surfaceCreationFailed
         }
         self.xdgSurface = xdgSurface
-        listeners.xdgSurface = waylandListener(Self.makeXdgSurfaceListener())
+        if listeners.xdgSurface == nil {
+            listeners.xdgSurface = waylandListener(Self.makeXdgSurfaceListener())
+        }
         xdg_surface_add_listener(xdgSurface, listeners.xdgSurface, me)
 
         guard let toplevel = xdg_surface_get_toplevel(xdgSurface) else {
             throw WaylandError.surfaceCreationFailed
         }
         self.xdgToplevel = toplevel
-        listeners.toplevel = waylandListener(Self.makeToplevelListener())
+        if listeners.toplevel == nil {
+            listeners.toplevel = waylandListener(Self.makeToplevelListener())
+        }
         xdg_toplevel_add_listener(toplevel, listeners.toplevel, me)
         setTitle(title)
 
         // Ask for a compositor-drawn titlebar where that's an option. Where
         // it isn't (GNOME advertises no decoration manager) the window is
         // simply undecorated — the alternative would be drawing our own
-        // chrome, which isn't this layer's job.
-        if let manager = display.decorationManager {
+        // chrome, which isn't this layer's job. A tray item's window asks
+        // for none: a client that doesn't ask is taken to draw its own.
+        if !isTrayPanel, let manager = display.decorationManager {
             decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(manager, toplevel)
             if let decoration {
-                listeners.decoration = waylandListener(Self.makeDecorationListener())
+                if listeners.decoration == nil {
+                    listeners.decoration = waylandListener(Self.makeDecorationListener())
+                }
                 zxdg_toplevel_decoration_v1_add_listener(decoration, listeners.decoration, me)
                 zxdg_toplevel_decoration_v1_set_mode(
                     decoration,
@@ -233,14 +280,70 @@ final class WaylandSurface {
             }
         }
 
-        display.register(self, for: surface)
-
         // A surface with a role must be committed before the compositor will
         // configure it, and the round trip waits for that configure so the
         // caller gets a window with a negotiated size rather than the one it
         // asked for.
         wl_surface_commit(surface)
         display.roundtrip()
+    }
+
+    /// Takes the role objects away, which unmaps the window. The buffer
+    /// goes first: a surface given its role again must have none.
+    private func destroyRole() {
+        if let handle, xdgToplevel != nil {
+            wl_surface_attach(handle, nil, 0, 0)
+            wl_surface_commit(handle)
+        }
+        if let decoration {
+            zxdg_toplevel_decoration_v1_destroy(decoration)
+            self.decoration = nil
+        }
+        if let xdgToplevel {
+            xdg_toplevel_destroy(xdgToplevel)
+            self.xdgToplevel = nil
+        }
+        if let xdgSurface {
+            xdg_surface_destroy(xdgSurface)
+            self.xdgSurface = nil
+        }
+        isConfigured = false
+        isActivated = false
+    }
+
+    /// Off the screen, until `show()`. Frames stop with it: there is no
+    /// role to present to.
+    func hide() {
+        guard handle != nil, isMapped else { return }
+        stopFrameLoop()
+        destroyRole()
+        WaylandDisplay.shared.flush()
+    }
+
+    /// Back on the screen after `hide()`, where the compositor puts it, on
+    /// the next frame's buffer.
+    func show() {
+        guard handle != nil else { return }
+        if !isMapped {
+            try? makeRole()
+        }
+        startFrameLoop()
+        WaylandDisplay.shared.flush()
+    }
+
+    /// Takes `width` × `height` points as the window's size, as a floating
+    /// window may choose its own. It reaches the handler with the next
+    /// frame, as a compositor's would.
+    func resize(width: Double, height: Double) {
+        self.width = max(width, 1)
+        self.height = max(height, 1)
+        if isFloating {
+            floatingWidth = self.width
+            floatingHeight = self.height
+        }
+        if let xdgSurface {
+            xdg_surface_set_window_geometry(xdgSurface, 0, 0, Int32(self.width), Int32(self.height))
+        }
     }
 
     deinit {
@@ -275,6 +378,7 @@ final class WaylandSurface {
     // MARK: - Window properties
 
     func setTitle(_ title: String) {
+        self.title = title
         guard let xdgToplevel else { return }
         title.withCString { xdg_toplevel_set_title(xdgToplevel, $0) }
         // The app id is what desktop environments match against a .desktop
@@ -486,6 +590,13 @@ final class WaylandSurface {
             me.pendingWidth = Double(width)
             me.pendingHeight = Double(height)
             me.isFloating = !containsSizingState(states)
+            // Had the keys and has them no longer: another window took them.
+            let activated = containsState(XDG_TOPLEVEL_STATE_ACTIVATED.rawValue, states)
+            let deactivated = me.isActivated && !activated
+            me.isActivated = activated
+            if deactivated {
+                me.handler?.waylandSurfaceDidDeactivate()
+            }
         }
         listener.close = { data, _ in
             // A request, not an order — the compositor is relaying the user

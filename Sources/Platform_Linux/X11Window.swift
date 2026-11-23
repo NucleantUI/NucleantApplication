@@ -32,7 +32,14 @@ final class X11Window {
     private var lastFrameTime: Double?
     private var frameLoopRunning = false
 
-    init(width: Double, height: Double, title: String) throws {
+    /// A tray item's window: no title bar, above the other windows, not in
+    /// the taskbar, and placed by the app.
+    let isTrayPanel: Bool
+
+    /// Mapped — on screen, as far as this client is concerned.
+    private(set) var isMapped = false
+
+    init(width: Double, height: Double, title: String, isTrayPanel: Bool = false) throws {
         try X11Display.shared.connect()
         guard let connection = X11Display.shared.connectionHandle,
               let screen = X11Display.shared.screen
@@ -42,6 +49,7 @@ final class X11Window {
         self.connection = connection
         self.width = width
         self.height = height
+        self.isTrayPanel = isTrayPanel
 
         let window = xcb_generate_id(connection)
         self.handle = window
@@ -54,6 +62,7 @@ final class X11Window {
             | XCB_EVENT_MASK_POINTER_MOTION.rawValue
             | XCB_EVENT_MASK_KEY_PRESS.rawValue
             | XCB_EVENT_MASK_KEY_RELEASE.rawValue
+            | XCB_EVENT_MASK_FOCUS_CHANGE.rawValue
 
         withUnsafeMutablePointer(to: &eventMask) { eventMaskPtr in
             _ = xcb_create_window(
@@ -89,7 +98,40 @@ final class X11Window {
         }
 
         setTitle(title)
+        if isTrayPanel {
+            describeTrayPanel()
+        }
         X11Display.shared.register(self, for: window)
+    }
+
+    /// What makes the window manager treat it as a tray item's window: no
+    /// decorations (Motif's hints, which every window manager still reads),
+    /// kept above the other windows and out of the taskbar and the pager
+    /// (EWMH's initial state). A managed window rather than an
+    /// override-redirect one, so it takes the keys like any other.
+    private func describeTrayPanel() {
+        let display = X11Display.shared
+        // flags: MWM_HINTS_DECORATIONS; functions, decorations, input mode,
+        // status: none.
+        let motif: [UInt32] = [2, 0, 0, 0, 0]
+        setProperty(display.atom("_MOTIF_WM_HINTS"), type: display.atom("_MOTIF_WM_HINTS"), motif)
+        setProperty(display.atom("_NET_WM_WINDOW_TYPE"), type: UInt32(XCB_ATOM_ATOM.rawValue),
+                    [display.atom("_NET_WM_WINDOW_TYPE_UTILITY")])
+        setProperty(display.atom("_NET_WM_STATE"), type: UInt32(XCB_ATOM_ATOM.rawValue), [
+            display.atom("_NET_WM_STATE_ABOVE"),
+            display.atom("_NET_WM_STATE_SKIP_TASKBAR"),
+            display.atom("_NET_WM_STATE_SKIP_PAGER"),
+        ])
+    }
+
+    private func setProperty(_ property: xcb_atom_t, type: xcb_atom_t, _ values: [UInt32]) {
+        guard property != 0 else { return }
+        values.withUnsafeBufferPointer { buffer in
+            _ = xcb_change_property(
+                connection, UInt8(XCB_PROP_MODE_REPLACE.rawValue), handle, property, type, 32,
+                UInt32(buffer.count), buffer.baseAddress
+            )
+        }
     }
 
     deinit {
@@ -124,11 +166,110 @@ final class X11Window {
     func setFullscreen(_ fullscreen: Bool) {}
 
     func show() {
+        isMapped = true
         _ = xcb_map_window(connection, handle)
         _ = xcb_flush(connection)
     }
 
+    /// Off the screen, until `show()`. Unmapped, it is withdrawn: the
+    /// window manager forgets it, and places it again when it is mapped.
+    func hide() {
+        guard isMapped else { return }
+        isMapped = false
+        _ = xcb_unmap_window(connection, handle)
+        _ = xcb_flush(connection)
+    }
+
+    /// Puts the window's top-left corner at `x`, `y` in root-window pixels.
+    ///
+    /// Unmapped, the window is the client's to move: configured there, and
+    /// said in the size hints as the user's choice — what a window manager
+    /// honours when it maps the window rather than placing it itself.
+    /// Mapped, it is the window manager's, which is asked with
+    /// `_NET_MOVERESIZE_WINDOW`: a configure request is relative to the
+    /// frame the window was put in, and lands somewhere else.
+    func move(x: Double, y: Double) {
+        let left = Int32(x.rounded()), top = Int32(y.rounded())
+        if isMapped {
+            let display = X11Display.shared
+            var event = xcb_client_message_event_t()
+            event.response_type = UInt8(XCB_CLIENT_MESSAGE)
+            event.format = 32
+            event.window = handle
+            event.type = display.atom("_NET_MOVERESIZE_WINDOW")
+            // Gravity: the window's own (0); x and y given (bits 8, 9);
+            // source: a pager (bit 13), as for `activate()`.
+            let flags: UInt32 = 0 | 1 << 8 | 1 << 9 | 2 << 12
+            event.data.data32 = (flags, UInt32(bitPattern: left), UInt32(bitPattern: top), 0, 0)
+            sendToRoot(&event)
+            return
+        }
+        var hints = [UInt32](repeating: 0, count: 18)
+        hints[0] = 1 | 2 | 4 | 8        // USPosition, USSize, PPosition, PSize
+        hints[1] = UInt32(bitPattern: left)
+        hints[2] = UInt32(bitPattern: top)
+        hints[3] = UInt32(max(width, 1))
+        hints[4] = UInt32(max(height, 1))
+        setProperty(UInt32(XCB_ATOM_WM_NORMAL_HINTS.rawValue), type: UInt32(XCB_ATOM_WM_SIZE_HINTS.rawValue), hints)
+        let values: [UInt32] = [UInt32(bitPattern: left), UInt32(bitPattern: top)]
+        values.withUnsafeBufferPointer { buffer in
+            _ = xcb_configure_window(
+                connection, handle,
+                UInt16(XCB_CONFIG_WINDOW_X.rawValue | XCB_CONFIG_WINDOW_Y.rawValue),
+                buffer.baseAddress
+            )
+        }
+        _ = xcb_flush(connection)
+    }
+
+    /// A client message for the window manager, which listens on the root
+    /// window.
+    private func sendToRoot(_ event: inout xcb_client_message_event_t) {
+        withUnsafePointer(to: &event) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<xcb_client_message_event_t>.size) {
+                _ = xcb_send_event(
+                    connection, 0, X11Display.shared.rootWindow,
+                    XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT.rawValue | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY.rawValue,
+                    $0
+                )
+            }
+        }
+        _ = xcb_flush(connection)
+    }
+
+    /// Resizes the window to `width` × `height` pixels. Taken as its size at
+    /// once, rather than when the server confirms it — the swapchain reads
+    /// it for the next frame.
+    func resize(width: Double, height: Double) {
+        let values: [UInt32] = [UInt32(max(width, 1)), UInt32(max(height, 1))]
+        values.withUnsafeBufferPointer { buffer in
+            _ = xcb_configure_window(
+                connection, handle,
+                UInt16(XCB_CONFIG_WINDOW_WIDTH.rawValue | XCB_CONFIG_WINDOW_HEIGHT.rawValue),
+                buffer.baseAddress
+            )
+        }
+        _ = xcb_flush(connection)
+        handleConfigure(width: width, height: height)
+    }
+
+    /// Asks the window manager to raise the window and give it the keys:
+    /// `_NET_ACTIVE_WINDOW`, from a pager — the source a window manager's
+    /// focus-stealing prevention lets through, as the app is acting on a
+    /// click the person made, only not in one of its windows.
+    func activate() {
+        let display = X11Display.shared
+        var event = xcb_client_message_event_t()
+        event.response_type = UInt8(XCB_CLIENT_MESSAGE)
+        event.format = 32
+        event.window = handle
+        event.type = display.atom("_NET_ACTIVE_WINDOW")
+        event.data.data32 = (2, 0, 0, 0, 0)          // source: pager; time: now
+        sendToRoot(&event)
+    }
+
     func destroy() {
+        isMapped = false
         X11Display.shared.unregister(handle)
         _ = xcb_destroy_window(connection, handle)
         _ = xcb_flush(connection)

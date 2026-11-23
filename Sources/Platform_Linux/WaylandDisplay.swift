@@ -10,6 +10,7 @@
 //
 #if os(Linux)
 import CWayland
+import Foundation
 import Glibc
 
 public enum WaylandError: Error, CustomStringConvertible {
@@ -224,10 +225,14 @@ public final class WaylandDisplay {
     /// Runs until `stop()` or until the compositor goes away. The Wayland
     /// counterpart of `NSApplication.run()` — it blocks, and every callback
     /// this module makes happens inside it.
+    ///
+    /// Each turn also gives Foundation's main run loop one pass, as
+    /// `X11Display.run()` does — see there.
     public func run() {
         running = true
         while running && !isTerminated {
             pumpEvents(timeoutMilliseconds: Self.pollTimeoutMilliseconds)
+            _ = RunLoop.main.run(mode: .default, before: Date())
         }
         running = false
     }

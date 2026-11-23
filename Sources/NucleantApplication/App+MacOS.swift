@@ -28,19 +28,9 @@ extension NucleantApplication {
         app.delegate = delegate
     }
 
-    /// Show `item` in the system tray — the right end of the menu bar —
-    /// until `removeTrayItem(_:)`. Call from `onStart()` or later.
-    public func insertTrayItem(_ item: TrayItem) {
-        appDelegate?.trayHost.insert(item)
-    }
-
-    /// Show what changed in an inserted tray item.
-    public func refreshTrayItem(_ item: TrayItem) {
-        appDelegate?.trayHost.refresh(item)
-    }
-
-    public func removeTrayItem(_ item: TrayItem) {
-        appDelegate?.trayHost.remove(item)
+    /// Quit, as the app menu's Quit does: `NSApplication.terminate(_:)`.
+    public func quit() {
+        NSApplication.shared.terminate(nil)
     }
 }
 

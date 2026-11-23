@@ -12,6 +12,7 @@
 //
 #if os(Linux)
 import CXCB
+import Foundation
 import Glibc
 
 public enum X11Error: Error, CustomStringConvertible {
@@ -107,6 +108,47 @@ public final class X11Display {
         utf8StringAtom = internAtom(connection, "UTF8_STRING")
     }
 
+    /// Atoms by name, interned once each.
+    private var atoms: [String: xcb_atom_t] = [:]
+
+    /// The atom `name` stands for on this server.
+    func atom(_ name: String) -> xcb_atom_t {
+        if let atom = atoms[name] { return atom }
+        guard let connectionHandle else { return 0 }
+        let atom = internAtom(connectionHandle, name)
+        if atom != 0 { atoms[name] = atom }
+        return atom
+    }
+
+    /// The root window, which the window manager's properties are on.
+    var rootWindow: xcb_window_t { screen?.root ?? 0 }
+
+    /// The part of the screen windows go on, less the panels' struts, in
+    /// root-window pixels: `_NET_WORKAREA` for the current desktop, or the
+    /// whole screen where the window manager doesn't say.
+    var workArea: (x: Double, y: Double, width: Double, height: Double) {
+        let whole = (x: 0.0, y: 0.0,
+                     width: Double(screen?.width_in_pixels ?? 0), height: Double(screen?.height_in_pixels ?? 0))
+        let areas = cardinals(atom("_NET_WORKAREA"), of: rootWindow)
+        let desktop = Int(cardinals(atom("_NET_CURRENT_DESKTOP"), of: rootWindow).first ?? 0)
+        guard areas.count >= (desktop + 1) * 4 else { return whole }
+        let area = areas[desktop * 4..<desktop * 4 + 4].map(Double.init)
+        guard area[2] > 0, area[3] > 0 else { return whole }
+        return (area[0], area[1], area[2], area[3])
+    }
+
+    /// A `CARDINAL` property's values.
+    func cardinals(_ property: xcb_atom_t, of window: xcb_window_t) -> [UInt32] {
+        guard let connectionHandle, property != 0 else { return [] }
+        let cookie = xcb_get_property(connectionHandle, 0, window, property, UInt32(XCB_ATOM_CARDINAL.rawValue), 0, 1024)
+        guard let reply = xcb_get_property_reply(connectionHandle, cookie, nil) else { return [] }
+        defer { free(reply) }
+        guard reply.pointee.format == 32, let value = xcb_get_property_value(reply) else { return [] }
+        let count = Int(xcb_get_property_value_length(reply)) / 4
+        let words = value.assumingMemoryBound(to: UInt32.self)
+        return (0..<count).map { words[$0] }
+    }
+
     private func internAtom(_ connection: OpaquePointer, _ name: String) -> xcb_atom_t {
         let cookie = name.utf8CString.withUnsafeBufferPointer { buf in
             xcb_intern_atom(connection, 0, UInt16(buf.count - 1), buf.baseAddress)
@@ -142,10 +184,16 @@ public final class X11Display {
 
     // MARK: - Event loop
 
+    /// Each turn also gives Foundation's main run loop one pass, as
+    /// `Win32EventLoop.run()` does: nothing else runs it here, and it is
+    /// what drains the main dispatch queue — so `DispatchQueue.main.async`,
+    /// `Task { @MainActor in … }` and `Timer`s run while no window is open
+    /// to pump it from its frames, as in an app that is only in the tray.
     public func run() {
         running = true
         while running && !isTerminated {
             pumpEvents(timeoutMilliseconds: Self.pollTimeoutMilliseconds)
+            _ = RunLoop.main.run(mode: .default, before: Date())
         }
         running = false
     }
@@ -265,6 +313,16 @@ public final class X11Display {
 
         case XCB_EXPOSE:
             break // frame ticks come from tickWindows(), not Expose
+
+        case XCB_FOCUS_OUT:
+            event.withMemoryRebound(to: xcb_focus_out_event_t.self, capacity: 1) { e in
+                // Not focus moving to a window inside this one, or the
+                // pointer's; not a grab ending, which hands focus back.
+                let detail = UInt32(e.pointee.detail), mode = UInt32(e.pointee.mode)
+                guard detail != XCB_NOTIFY_DETAIL_INFERIOR.rawValue, detail != XCB_NOTIFY_DETAIL_POINTER.rawValue,
+                      mode != XCB_NOTIFY_MODE_UNGRAB.rawValue else { return }
+                window(for: e.pointee.event)?.handler?.waylandSurfaceDidDeactivate()
+            }
 
         default:
             break
