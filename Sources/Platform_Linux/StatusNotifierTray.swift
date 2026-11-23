@@ -579,11 +579,9 @@ private final class StatusNotifierItem {
 
     // MARK: Identity
 
-    /// The executable's name: what a host groups the item under.
-    private static let appID: String = {
-        let name = ProcessInfo.processInfo.processName
-        return name.isEmpty ? "nucleant" : name
-    }()
+    /// The executable's name: what a host groups the item under, the same
+    /// name the app's windows go by (`linuxAppID`).
+    private static var appID: String { linuxAppID }
 
     private static let machineID: String = {
         for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {

@@ -382,8 +382,10 @@ final class WaylandSurface {
         guard let xdgToplevel else { return }
         title.withCString { xdg_toplevel_set_title(xdgToplevel, $0) }
         // The app id is what desktop environments match against a .desktop
-        // file for the icon and the task-switcher name.
-        title.withCString { xdg_toplevel_set_app_id(xdgToplevel, $0) }
+        // file for the icon and the task-switcher name, and group an app's
+        // windows under: the app's, the same for every window and every
+        // title — not the title, which made each window an app of its own.
+        linuxAppID.withCString { xdg_toplevel_set_app_id(xdgToplevel, $0) }
     }
 
     func minimize() {

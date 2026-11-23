@@ -98,10 +98,42 @@ final class X11Window {
         }
 
         setTitle(title)
+        identifyApp()
         if isTrayPanel {
             describeTrayPanel()
         }
         X11Display.shared.register(self, for: window)
+    }
+
+    /// Which app the window is: `WM_CLASS`, what docks, taskbars and the
+    /// window switcher group an app's windows under and match to its
+    /// launcher, and `_NET_WM_PID` with `WM_CLIENT_MACHINE`, the process
+    /// it is — without them every window is an app of its own. The class
+    /// is the executable's name, as a .desktop file's `StartupWMClass`
+    /// names it.
+    private func identifyApp() {
+        let name = linuxAppID
+        let instanceAndClass = Array(name.utf8) + [0] + Array(name.utf8) + [0]
+        instanceAndClass.withUnsafeBufferPointer { buffer in
+            _ = xcb_change_property(
+                connection, UInt8(XCB_PROP_MODE_REPLACE.rawValue), handle,
+                UInt32(XCB_ATOM_WM_CLASS.rawValue), UInt32(XCB_ATOM_STRING.rawValue), 8,
+                UInt32(buffer.count), buffer.baseAddress
+            )
+        }
+        var host = [CChar](repeating: 0, count: 256)
+        if gethostname(&host, host.count - 1) == 0 {
+            let machine = host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+            machine.withUnsafeBufferPointer { buffer in
+                _ = xcb_change_property(
+                    connection, UInt8(XCB_PROP_MODE_REPLACE.rawValue), handle,
+                    UInt32(XCB_ATOM_WM_CLIENT_MACHINE.rawValue), UInt32(XCB_ATOM_STRING.rawValue), 8,
+                    UInt32(buffer.count), buffer.baseAddress
+                )
+            }
+        }
+        setProperty(X11Display.shared.atom("_NET_WM_PID"), type: UInt32(XCB_ATOM_CARDINAL.rawValue),
+                    [UInt32(getpid())])
     }
 
     /// What makes the window manager treat it as a tray item's window: no
@@ -141,6 +173,16 @@ final class X11Window {
     // MARK: - Window
 
     func setTitle(_ title: String) {
+        // WM_NAME as well, for what reads only ICCCM's: a STRING is
+        // Latin-1, so the UTF-8 title stands in only where it is ASCII.
+        let legacy = title.unicodeScalars.allSatisfy(\.isASCII) ? title : linuxAppID
+        legacy.utf8CString.withUnsafeBufferPointer { buf in
+            _ = xcb_change_property(
+                connection, UInt8(XCB_PROP_MODE_REPLACE.rawValue), handle,
+                UInt32(XCB_ATOM_WM_NAME.rawValue), UInt32(XCB_ATOM_STRING.rawValue), 8,
+                UInt32(buf.count - 1), buf.baseAddress
+            )
+        }
         title.utf8CString.withUnsafeBufferPointer { buf in
             let len = buf.count - 1 // exclude the trailing NUL xcb doesn't want counted
             _ = xcb_change_property(
