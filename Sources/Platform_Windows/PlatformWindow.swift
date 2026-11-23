@@ -32,6 +32,23 @@ public final class PlatformWindow<WindowBase>: Win32WindowHandler
     /// behaviour macOS has.
     public var on_close: (() -> Void)?
 
+    /// Called when the window loses the keys to another window — another
+    /// app's, or the taskbar's. A tray item's window goes away then.
+    public var on_deactivate: (() -> Void)?
+
+    /// What kind of window it is.
+    public enum Role {
+        /// A window of the app's: framed, with the app's menu bar, placed by
+        /// Windows and shown by `show()`.
+        case window
+        /// A tray item's window: no frame, over every other window, not on
+        /// the taskbar, and hidden until the app shows it at its item
+        /// (`show(near:)`).
+        case trayPanel
+    }
+
+    public let role: Role
+
     /// Strongly held by the owner; referenced weakly here so the window
     /// doesn't retain its delegate. Same contract as the other platforms.
     public weak var win_delegate: WindowBase?
@@ -45,12 +62,19 @@ public final class PlatformWindow<WindowBase>: Win32WindowHandler
     ///     and puts its title bar, frame and menu bar around this.
     ///   - height: the content's height in points.
     ///   - title: shown in the title bar and on the taskbar.
-    public init(width: Int, height: Int, title: String = "Nucleant") throws {
-        window = try Win32Window(width: Double(width), height: Double(height), title: title)
+    ///   - role: a window of the app's, or a tray item's.
+    public init(width: Int, height: Int, title: String = "Nucleant", role: Role = .window) throws {
+        self.role = role
+        window = try Win32Window(
+            width: Double(width), height: Double(height), title: title, isTrayPanel: role == .trayPanel
+        )
         window.handler = self
         // Start ticking immediately, matching the other platforms. It no-ops
-        // until `win_delegate` is set.
-        startFrameLoop()
+        // until `win_delegate` is set. A tray item's window draws nothing
+        // until it is shown.
+        if role == .window {
+            startFrameLoop()
+        }
     }
 
     deinit {
@@ -89,6 +113,36 @@ public final class PlatformWindow<WindowBase>: Win32WindowHandler
     public func close() {
         window.destroy()
         on_close?()
+    }
+
+    /// Whether it is on screen: shown, and not hidden since.
+    public var isVisible: Bool { window.isVisible }
+
+    /// Takes the window off the screen, keeping it for `show()` to bring
+    /// back. It draws no frames meanwhile.
+    public func hide() {
+        stopFrameLoop()
+        window.hide()
+    }
+
+    /// Shows a tray item's window dropping from the item at `anchor`, in
+    /// screen pixels: on the side of it that faces the rest of the screen,
+    /// inside its monitor's work area (`TrayAnchor.dropDownOrigin`), with
+    /// the keys.
+    public func show(near anchor: TrayAnchor) {
+        window.startFrameLoop()
+        window.show(near: anchor)
+    }
+
+    /// Resizes the content to `width` × `height` points, as a tray item's
+    /// window follows its content. The new size reaches `on_size`.
+    public func setContentSize(width: Double, height: Double) {
+        window.setContentSize(width: width, height: height)
+    }
+
+    /// Brings the window in front of the others and gives it the keys.
+    public func activate() {
+        window.activate()
     }
 
     // MARK: - Geometry
@@ -152,6 +206,10 @@ public final class PlatformWindow<WindowBase>: Win32WindowHandler
                 Win32EventLoop.shared.stop()
             }
         }
+    }
+
+    func win32WindowDidDeactivate() {
+        on_deactivate?()
     }
 
     func win32PointerDown(at location: SIMD2<Double>) {

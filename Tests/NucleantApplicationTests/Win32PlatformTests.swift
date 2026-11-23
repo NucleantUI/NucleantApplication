@@ -326,17 +326,69 @@ struct Win32PlatformTests {
             getExtent: { [unowned window] in VkExtent2D(width: window.bufferWidth, height: window.bufferHeight) }
         )
         delegate.renderEngine = engine
-        let node = try engine.makePixelBufferNode(width: 8, height: 8)
+        let node = try engine.renderDevice.makePixelBufferNode(width: 8, height: 8)
         node.write(rgba: [UInt32](repeating: 0xFF00_80FF, count: 64))
         engine.append(TestSlot(id: 1, context: .pixels(node)))
 
         for _ in 0..<3 {
             engine.drawFrame(1.0 / 60.0)
         }
-        #expect(engine.readable.contains(1))
+        #expect(engine.renderDevice.readable.contains(1))
     }
 
     // MARK: Helpers
+
+    // MARK: Tray windows
+
+    @Test func aTrayWindowIsHiddenUntilShownAtItsItem() throws {
+        // Commands installed: a tray window still gets no menu bar.
+        Win32MenuBar().install(MenuBar(menus: [MenuBar.Menu(title: "App")]))
+        defer { Win32EventLoop.shared.installMenu(nil) }
+        let panel = try PlatformWindow<RecordingWindow>(width: 200, height: 120, title: "panel", role: .trayPanel)
+        defer { panel.close() }
+        let delegate = RecordingWindow()
+        panel.win_delegate = delegate
+        #expect(!panel.isVisible)
+        #expect(GetMenu(panel.win32Window) == nil)
+        let extended = GetWindowLongPtrW(panel.win32Window, GWL_EXSTYLE)
+        #expect(extended & LONG_PTR(WS_EX_TOOLWINDOW) != 0)
+        #expect(extended & LONG_PTR(WS_EX_TOPMOST) != 0)
+
+        var deactivated = 0
+        panel.on_deactivate = { deactivated += 1 }
+        SendMessageW(panel.win32Window, UINT(WM_ACTIVATE), WPARAM(WA_INACTIVE), 0)
+        #expect(deactivated == 1)
+
+        // Shown and placed: only where there is a desktop to show it on —
+        // not over SSH, whose window station has none.
+        guard Self.hasVisibleDesktop else { return }
+        // An icon in a taskbar along the bottom of the primary monitor.
+        var monitor = MONITORINFO()
+        monitor.cbSize = DWORD(MemoryLayout<MONITORINFO>.size)
+        GetMonitorInfoW(MonitorFromPoint(POINT(x: 0, y: 0), DWORD(MONITOR_DEFAULTTOPRIMARY)), &monitor)
+        let work = monitor.rcWork
+        panel.show(near: TrayAnchor(x: Double(work.right - 100), y: Double(work.bottom + 4), width: 24, height: 24))
+        #expect(panel.isVisible)
+        var frame = RECT()
+        GetWindowRect(panel.win32Window, &frame)
+        #expect(frame.left >= work.left && frame.top >= work.top)
+        #expect(frame.right <= work.right && frame.bottom <= work.bottom)
+        // Just above the taskbar, as near the icon as the work area allows.
+        #expect(work.bottom - frame.bottom <= 8)
+
+        panel.hide()
+        #expect(!panel.isVisible)
+    }
+
+    /// Whether this process's window station is the interactive one, where
+    /// a window shown is on screen.
+    private static var hasVisibleDesktop: Bool {
+        var flags = USEROBJECTFLAGS()
+        var needed: DWORD = 0
+        guard GetUserObjectInformationW(GetProcessWindowStation(), UOI_FLAGS, &flags,
+                                        DWORD(MemoryLayout<USEROBJECTFLAGS>.size), &needed) else { return false }
+        return flags.dwFlags & DWORD(WSF_VISIBLE) != 0
+    }
 
     private func openWindow(width: Int = 100, height: Int = 80) throws -> (PlatformWindow<RecordingWindow>, RecordingWindow) {
         let window = try PlatformWindow<RecordingWindow>(width: width, height: height, title: "events")
@@ -428,12 +480,12 @@ final class TestSlot: RenderContainerNode, @unchecked Sendable {
         if case .pixels(let node) = context { observe(node) }
     }
 
-    func update(engine: Engine, cmd: VkCommandBuffer) {
-        if case .pixels(let node) = context { node.update(engine, slot: self, cmd: cmd) }
+    func update(device: Device, cmd: VkCommandBuffer) {
+        if case .pixels(let node) = context { node.update(device, slot: self, cmd: cmd) }
     }
 
-    func destroyResources(engine: Engine) {
-        if case .pixels(let node) = context { node.destroyResources(engine) }
+    func destroyResources(device: Device) {
+        if case .pixels(let node) = context { node.destroyResources(device) }
     }
 
     func getImageView() -> VkImageView? {

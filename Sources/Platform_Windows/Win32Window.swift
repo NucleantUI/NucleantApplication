@@ -11,6 +11,7 @@
 //  `tick(now:)`, driven by the event loop's turns, is the frame clock.
 //
 #if os(Windows)
+import NucleantWindow
 import WinSDK
 
 /// What a `Win32Window` reports, the Windows counterpart of
@@ -20,6 +21,8 @@ protocol Win32WindowHandler: AnyObject {
     func win32WindowDidTick(dt: Double)
     func win32WindowDidResize(width: Double, height: Double)
     func win32WindowDidRequestClose()
+    /// The window lost the keys to another — another app's, the taskbar.
+    func win32WindowDidDeactivate()
 
     func win32PointerDown(at location: SIMD2<Double>)
     func win32PointerUp(at location: SIMD2<Double>)
@@ -80,22 +83,40 @@ final class Win32Window {
     /// Fingers down, by pointer id, where each last was.
     private var touches: [UInt32: SIMD2<Double>] = [:]
 
-    private static let style = DWORD(WS_OVERLAPPEDWINDOW)
+    /// A tray item's window: no frame or title bar, over every other
+    /// window, not on the taskbar, with no menu bar — and placed, shown and
+    /// hidden by the app.
+    let isTrayPanel: Bool
+
+    /// The window's styles: an ordinary overlapped window, or a tray item's
+    /// popup.
+    private let style: DWORD
+    private let extendedStyle: DWORD
+
+    /// Whether the app's menu bar goes on this window.
+    var hasMenuBar: Bool { !isTrayPanel }
 
     /// - Parameters:
     ///   - width: the client area's width in points, at the DPI of the
     ///     monitor the window opens on.
     ///   - height: the client area's height in points.
     ///   - title: shown in the title bar and on the taskbar.
-    init(width: Double, height: Double, title: String) throws {
+    ///   - isTrayPanel: a tray item's window rather than one of the app's.
+    init(width: Double, height: Double, title: String, isTrayPanel: Bool = false) throws {
         let loop = Win32EventLoop.shared
         try loop.prepare()
+        self.isTrayPanel = isTrayPanel
+        let style = isTrayPanel ? DWORD(WS_POPUP) : DWORD(WS_OVERLAPPEDWINDOW)
+        let extendedStyle = isTrayPanel ? DWORD(WS_EX_TOOLWINDOW | WS_EX_TOPMOST) : 0
+        self.style = style
+        self.extendedStyle = extendedStyle
         let created = title.withCString(encodedAs: UTF16.self) { title in
             Win32EventLoop.windowClassName.withUnsafeBufferPointer { className in
                 // Placed by Windows (CW_USEDEFAULT), as Linux leaves placement
-                // to the window manager; sized below, once it has a DPI.
+                // to the window manager; sized below, once it has a DPI. A
+                // tray item's window is placed at its item when shown.
                 CreateWindowExW(
-                    0, className.baseAddress, title, Self.style,
+                    extendedStyle, className.baseAddress, title, style,
                     CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                     nil, nil, loop.instance, nil
                 )
@@ -110,7 +131,14 @@ final class Win32Window {
         loop.register(self)
 
         WindowsAppearance.applyTitleBar(to: created)
-        if let template = loop.menuTemplate {
+        if isTrayPanel {
+            // Rounded, as Windows 11's own flyouts are. Refused, harmlessly,
+            // before Windows 11.
+            var corners = DWMWCP_ROUND
+            _ = DwmSetWindowAttribute(created, DWORD(DWMWA_WINDOW_CORNER_PREFERENCE.rawValue), &corners,
+                                      DWORD(MemoryLayout.size(ofValue: corners)))
+        }
+        if !isTrayPanel, let template = loop.menuTemplate {
             menu = template.makeMenu()
             SetMenu(created, menu)
         }
@@ -166,7 +194,7 @@ final class Win32Window {
             GetMonitorInfoW(MonitorFromWindow(handle, DWORD(MONITOR_DEFAULTTONEAREST)), &monitor)
             let area = monitor.rcMonitor
             SetMenu(handle, nil)
-            SetWindowLongPtrW(handle, GWL_STYLE, style & ~LONG_PTR(Self.style))
+            SetWindowLongPtrW(handle, GWL_STYLE, style & ~LONG_PTR(self.style))
             SetWindowPos(handle, nil, area.left, area.top, area.right - area.left, area.bottom - area.top,
                          UINT(SWP_NOOWNERZORDER | SWP_FRAMECHANGED))
         } else if let windowed = windowedState {
@@ -183,6 +211,65 @@ final class Win32Window {
     func show() {
         guard !isDestroyed else { return }
         ShowWindow(handle, SW_SHOWNORMAL)
+    }
+
+    var isVisible: Bool { !isDestroyed && IsWindowVisible(handle) }
+
+    /// Off the screen, until shown again; nothing of it is destroyed.
+    func hide() {
+        guard !isDestroyed else { return }
+        ShowWindow(handle, SW_HIDE)
+    }
+
+    /// Brings the window in front and gives it the keys — restored first if
+    /// it is minimized.
+    func activate() {
+        guard !isDestroyed else { return }
+        if IsIconic(handle) { ShowWindow(handle, SW_RESTORE) }
+        SetForegroundWindow(handle)
+    }
+
+    /// Shows a tray item's window dropping from the item at `anchor`, in
+    /// screen pixels, and gives it the keys. Moved onto the item's monitor
+    /// first and placed again there, as its size in pixels follows that
+    /// monitor's DPI.
+    func show(near anchor: TrayAnchor) {
+        guard !isDestroyed else { return }
+        var item = RECT(
+            left: Int32(anchor.x.rounded()), top: Int32(anchor.y.rounded()),
+            right: Int32((anchor.x + anchor.width).rounded()), bottom: Int32((anchor.y + anchor.height).rounded())
+        )
+        var monitor = MONITORINFO()
+        monitor.cbSize = DWORD(MemoryLayout<MONITORINFO>.size)
+        guard GetMonitorInfoW(MonitorFromRect(&item, DWORD(MONITOR_DEFAULTTONEAREST)), &monitor) else { return }
+        let work = monitor.rcWork
+        let area = TrayAnchor(x: Double(work.left), y: Double(work.top),
+                              width: Double(work.right - work.left), height: Double(work.bottom - work.top))
+        for _ in 0..<2 {
+            var frame = RECT()
+            GetWindowRect(handle, &frame)
+            let origin = anchor.dropDownOrigin(
+                width: Double(frame.right - frame.left), height: Double(frame.bottom - frame.top),
+                in: area
+            )
+            // HWND_TOPMOST is ((HWND)-1), a cast Swift doesn't import.
+            SetWindowPos(handle, HWND(bitPattern: -1), Int32(origin.x.rounded()), Int32(origin.y.rounded()), 0, 0,
+                         UINT(SWP_NOSIZE | SWP_NOACTIVATE))
+        }
+        // Shown by SetWindowPos rather than ShowWindow: a process's first
+        // ShowWindow takes the show state its launcher asked for instead —
+        // hidden, for one started from a scheduled task or a service — and
+        // a tray app's first window shown is this one.
+        SetWindowPos(handle, HWND(bitPattern: -1), 0, 0, 0, 0, UINT(SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW))
+        SetForegroundWindow(handle)
+    }
+
+    /// Resizes the client area to `width` × `height` points, as a tray
+    /// item's window follows its content.
+    func setContentSize(width: Double, height: Double) {
+        guard !isDestroyed else { return }
+        setClientSize(width: width, height: height)
+        clientAreaChanged()
     }
 
     func destroy() {
@@ -246,7 +333,7 @@ final class Win32Window {
     private func setClientSize(width: Double, height: Double) {
         let wanted = (width: Int32((width * scale).rounded()), height: Int32((height * scale).rounded()))
         var rect = RECT(left: 0, top: 0, right: wanted.width, bottom: wanted.height)
-        AdjustWindowRectExForDpi(&rect, Self.style, GetMenu(handle) != nil, 0, dpi)
+        AdjustWindowRectExForDpi(&rect, style, GetMenu(handle) != nil, extendedStyle, dpi)
         let flags = UINT(SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
         SetWindowPos(handle, nil, 0, 0, rect.right - rect.left, rect.bottom - rect.top, flags)
         // AdjustWindowRectExForDpi counts one row of menu bar, and a window
@@ -258,7 +345,11 @@ final class Win32Window {
         if short != (0, 0) {
             SetWindowPos(handle, nil, 0, 0, rect.right - rect.left + short.width, rect.bottom - rect.top + short.height, flags)
         }
-        fitToWorkArea()
+        // A tray item's window is placed at its item, inside the work area,
+        // as it is shown.
+        if !isTrayPanel {
+            fitToWorkArea()
+        }
     }
 
     /// Cuts the window down to its monitor's work area (the screen less the
@@ -348,6 +439,12 @@ final class Win32Window {
             // the handler's to say.
             handler?.win32WindowDidRequestClose()
             return 0
+
+        case WM_ACTIVATE:
+            if lowWord(wParam) == UInt16(WA_INACTIVE) {
+                handler?.win32WindowDidDeactivate()
+            }
+            return nil
 
         case WM_DESTROY:
             isDestroyed = true

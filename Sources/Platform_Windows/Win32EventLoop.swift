@@ -139,7 +139,7 @@ public final class Win32EventLoop {
     /// made later; nil takes it down.
     func installMenu(_ template: Win32MenuTemplate?) {
         menuTemplate = template
-        for window in liveWindows {
+        for window in liveWindows where window.hasMenuBar {
             window.setMenu(template?.makeMenu())
         }
     }
