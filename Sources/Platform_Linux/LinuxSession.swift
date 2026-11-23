@@ -5,6 +5,16 @@
 #if os(Linux)
 import Foundation
 
+/// What the desktop knows the app as: the executable's name. A window's
+/// X11 `WM_CLASS` and Wayland app id, and a tray item's id — one name for
+/// every window, which a .desktop file matches (`StartupWMClass`, or its
+/// own name for an app id) to give the app its icon and its place in a
+/// dock.
+let linuxAppID: String = {
+    let name = ProcessInfo.processInfo.processName
+    return name.isEmpty ? "nucleant" : name
+}()
+
 /// Which windowing system to talk to. Most desktop Linux is still X11 by
 /// default (Cinnamon, MATE, XFCE, and GNOME/KDE whenever their X11 session is
 /// what's actually running) — Wayland is only picked when the environment

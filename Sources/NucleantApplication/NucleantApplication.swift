@@ -11,7 +11,8 @@ public protocol NucleantApplication: AnyObject {
 
     /// Whether the app quits once its last window closes. `true` unless the
     /// app says otherwise — one with an item in the system tray goes on
-    /// without windows. Asked on macOS.
+    /// without windows. AppKit asks it on macOS; on Linux and Windows,
+    /// where the platform asks nothing, the app's own window layer does.
     var terminatesAfterLastWindowClosed: Bool { get }
 
     /// Whether the app starts with its icon in the Dock and its menus in the
@@ -54,6 +55,27 @@ extension NucleantApplication {
     /// menus or commands in place.
     public func refreshCommands() {
         appDelegate?.menuBarHost.refresh()
+    }
+}
+#endif
+
+#if os(macOS) || os(Linux) || os(Windows)
+extension NucleantApplication {
+    /// Show `item` in the system tray — the right end of the menu bar on
+    /// macOS, the notification area by the clock on Windows, the panel's
+    /// tray on Linux — until `removeTrayItem(_:)`. Call from `onStart()` or
+    /// later.
+    public func insertTrayItem(_ item: TrayItem) {
+        appDelegate?.trayHost.insert(item)
+    }
+
+    /// Show what changed in an inserted tray item.
+    public func refreshTrayItem(_ item: TrayItem) {
+        appDelegate?.trayHost.refresh(item)
+    }
+
+    public func removeTrayItem(_ item: TrayItem) {
+        appDelegate?.trayHost.remove(item)
     }
 }
 #endif

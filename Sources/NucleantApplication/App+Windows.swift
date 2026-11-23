@@ -25,6 +25,12 @@ extension NucleantApplication {
         }
         try appDelegate.run()
     }
+
+    /// Quit: the event loop ends, so `run()` returns, with the app's tray
+    /// icons taken out.
+    public func quit() {
+        appDelegate?.terminate()
+    }
 }
 
 /// Owns the Windows app lifecycle. The parallel of the `AppDelegate` classes
@@ -39,6 +45,9 @@ public final class AppDelegate<App: NucleantApplication> {
     /// of them.
     public let menuBarHost = Win32MenuBar()
 
+    /// The app's icons in the notification area.
+    public let trayHost = Win32Tray()
+
     public init(app: App) {
         self.app = app
     }
@@ -50,6 +59,9 @@ public final class AppDelegate<App: NucleantApplication> {
         try Win32EventLoop.shared.prepare()
         app?.onStart()
         Win32EventLoop.shared.run()
+        // An icon whose process is gone stays in the taskbar until the
+        // pointer passes over it.
+        trayHost.removeAll()
     }
 
     /// Ends the event loop, so a blocked `run()` returns. Windows are left

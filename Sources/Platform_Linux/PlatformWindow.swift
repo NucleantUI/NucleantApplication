@@ -32,6 +32,18 @@ import CXCB
 public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
     where WindowBase: NucleantWindow & WaylandWindowDelegate {
 
+    /// What kind of window it is.
+    public enum Role {
+        /// A window of the app's: decorated, placed by the window manager,
+        /// shown by `show()`.
+        case window
+        /// A tray item's window: no title bar, above the other windows, out
+        /// of the taskbar, and hidden until the app shows it at its item
+        /// (`show(near:)`). On X11 it is placed there; on Wayland, where a
+        /// client places nothing, the compositor puts it where it likes.
+        case trayPanel
+    }
+
     /// Which native surface handles to build a `VulkanRenderEngine` from.
     public enum VulkanSurfaceKind {
         case wayland(display: OpaquePointer?, surface: OpaquePointer?)
@@ -44,6 +56,12 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
     /// the `applicationShouldTerminateAfterLastWindowClosed` behaviour macOS
     /// has.
     public var on_close: (() -> Void)?
+
+    /// Called when the window loses the keys to another window — another
+    /// app's, or the desktop's. A tray item's window goes away then.
+    public var on_deactivate: (() -> Void)?
+
+    public let role: Role
 
     /// Strongly held by the owner; referenced weakly here so the window
     /// doesn't retain its delegate. Same contract as macOS/iOS.
@@ -67,22 +85,37 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
     /// There is no origin parameter: neither Wayland nor (in practice, given
     /// a window manager) X11 clients get to position their own windows.
     /// Placement belongs to the compositor/WM, by design.
-    public init(width: Int, height: Int, title: String = "Nucleant") throws {
+    ///   - role: a window of the app's, or a tray item's.
+    public init(width: Int, height: Int, title: String = "Nucleant", role: Role = .window) throws {
+        self.role = role
+        let isTrayPanel = role == .trayPanel
         switch LinuxSession.detect() {
         case .wayland:
-            let surface = try WaylandSurface(width: Double(width), height: Double(height), title: title)
+            let surface = try WaylandSurface(
+                width: Double(width), height: Double(height), title: title, isTrayPanel: isTrayPanel
+            )
             backend = .wayland(surface)
         case .x11:
-            let window = try X11Window(width: Double(width), height: Double(height), title: title)
+            let window = try X11Window(
+                width: Double(width), height: Double(height), title: title, isTrayPanel: isTrayPanel
+            )
             backend = .x11(window)
         }
         switch backend {
         case .wayland(let surface): surface.handler = self
         case .x11(let window): window.handler = self
         }
-        // Start ticking immediately, matching macOS/iOS where the display
-        // link runs from init. It no-ops until `win_delegate` is set.
-        startFrameLoop()
+        switch role {
+        case .window:
+            // Start ticking immediately, matching macOS/iOS where the display
+            // link runs from init. It no-ops until `win_delegate` is set.
+            startFrameLoop()
+        case .trayPanel:
+            // Hidden until it is shown at its item, and drawing nothing until
+            // then. On Wayland the configured surface is mapped by its first
+            // buffer, so it is unmapped here.
+            if case .wayland(let surface) = backend { surface.hide() }
+        }
     }
 
     deinit {
@@ -153,6 +186,69 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
         case .x11(let window): window.destroy()
         }
         on_close?()
+    }
+
+    /// Whether it is on screen: shown, and not hidden since.
+    public var isVisible: Bool {
+        switch backend {
+        case .wayland(let surface): surface.isMapped
+        case .x11(let window): window.isMapped
+        }
+    }
+
+    /// Takes the window off the screen, keeping it — its surface, and what
+    /// renders into it — for `show()` to bring back. It draws no frames
+    /// meanwhile.
+    public func hide() {
+        stopFrameLoop()
+        switch backend {
+        case .wayland(let surface): surface.hide()
+        case .x11(let window): window.hide()
+        }
+    }
+
+    /// Shows a tray item's window dropping from the item at `anchor`, and
+    /// gives it the keys. On X11 it goes on the side of the item that faces
+    /// the rest of the screen, inside the work area
+    /// (`TrayAnchor.dropDownOrigin`); on Wayland the compositor places it.
+    public func show(near anchor: TrayAnchor) {
+        switch backend {
+        case .wayland(let surface):
+            surface.show()
+            WaylandDisplay.shared.flush()
+        case .x11(let window):
+            let area = X11Display.shared.workArea
+            let origin = anchor.dropDownOrigin(
+                width: window.width * window.scale, height: window.height * window.scale,
+                in: TrayAnchor(x: area.x, y: area.y, width: area.width, height: area.height)
+            )
+            // Placed before it is mapped, where the window manager takes the
+            // place from its hints; moved by the window manager when it is
+            // on screen already, as it grows with its content.
+            window.move(x: origin.x, y: origin.y)
+            window.startFrameLoop()
+            window.show()
+            window.activate()
+        }
+    }
+
+    /// Resizes the window to `width` × `height` points, as a tray item's
+    /// window follows its content. The new size reaches `on_size`.
+    public func setContentSize(width: Double, height: Double) {
+        switch backend {
+        case .wayland(let surface): surface.resize(width: width, height: height)
+        case .x11(let window): window.resize(width: width * window.scale, height: height * window.scale)
+        }
+    }
+
+    /// Brings the window in front of the others and gives it the keys, as
+    /// far as the window manager lets an app: on Wayland the compositor
+    /// decides, and this does nothing.
+    public func activate() {
+        switch backend {
+        case .wayland: break
+        case .x11(let window): window.activate()
+        }
     }
 
     // MARK: - Geometry
@@ -261,6 +357,10 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
                 }
             }
         }
+    }
+
+    func waylandSurfaceDidDeactivate() {
+        on_deactivate?()
     }
 
     func waylandPointerDown(at location: SIMD2<Double>) {
