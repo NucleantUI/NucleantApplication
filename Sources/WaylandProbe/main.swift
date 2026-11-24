@@ -42,8 +42,8 @@ final class ProbeNode: RenderContainerNode, @unchecked Sendable {
     // VkCommandBuffer / VkImageView are opaque-handle typedefs, so they import
     // as OpaquePointer — which is what lets this conform without CVulkan,
     // a module NucleantVulkan doesn't re-export on Linux.
-    func update(engine: Engine, cmd: OpaquePointer) {}
-    func destroyResources(engine: Engine) {}
+    func update(device: Device, cmd: OpaquePointer) {}
+    func destroyResources(device: Device) {}
     func getImageView() -> OpaquePointer? { nil }
 }
 
