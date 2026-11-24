@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build NucleantApplication's tests for WebAssembly and run them in headless Chrome.
+"""Build a package's tests for WebAssembly and run them in headless Chrome.
 
 Platform_Wasm needs a page: its windows are <canvas> elements and its frame
 loop is requestAnimationFrame. This builds the test product with the wasm
@@ -8,7 +8,16 @@ Web/ here, plus NucleantVulkan's Web/ files (the WebGPU bridge, WASI, naga),
 which the page finds next to nucleant-app.js exactly as in a built app — and
 runs Web/test/index.html in headless Chrome, relaying the test output.
 
-    python3 scripts/run_wasm_tests.py [--chrome PATH] [-- <test arguments>]
+    python3 scripts/run_wasm_tests.py [--package-path DIR] [--chrome PATH] [-- <test arguments>]
+
+The package is NucleantApplication unless `--package-path` names another —
+one built on NucleantApplication, or one that runs in the page without it.
+Its test bundles' resources are mounted as an app's are, and a test product
+built with JavaScriptKit gets JavaScriptKit's runtime from the build's
+checkout, as build_wasm_app.py gives an app — and is built as a reactor,
+as an app is, since JavaScriptKit runs no other kind; the page then calls
+its main instead of _start. Sound plays without a click first
+(--autoplay-policy), as nobody is there to give one.
 
 Chrome: --chrome, else $CHROME, else the usual install locations (any Chrome
 with WebGPU and JSPI, i.e. 137+; Chrome for Testing works).
@@ -30,10 +39,9 @@ import threading
 import urllib.parse
 from pathlib import Path
 
-from build_wasm_app import pack_zoneinfo
+from build_wasm_app import REACTOR_TOOLSET, copy_javascriptkit_runtime, copy_resources, pack_zoneinfo
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-SCRATCH = PACKAGE_ROOT / ".build" / "wasm"
 VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)?)")
 NUCLEANT_VULKAN_WEB = {"nucleant-webgpu.js", "nucleant-wgpu.js", "nucleant-wasi.js", "naga_webgpu.wasm"}
 
@@ -67,30 +75,47 @@ def find_chrome(explicit: str | None) -> str:
     sys.exit("error: no Chrome found; pass --chrome PATH or set CHROME")
 
 
-def nucleant_vulkan_web() -> Path:
-    for candidate in (PACKAGE_ROOT.parent / "NucleantVulkan" / "Web", SCRATCH / "checkouts" / "NucleantVulkan" / "Web"):
+def nucleant_vulkan_web(scratch: Path) -> Path:
+    for candidate in (PACKAGE_ROOT.parent / "NucleantVulkan" / "Web", scratch / "checkouts" / "NucleantVulkan" / "Web"):
         if (candidate / "nucleant-webgpu.js").is_file():
             return candidate
     sys.exit("error: NucleantVulkan's Web/ directory not found")
 
 
-def build_tests() -> Path:
+def build_tests(package: Path) -> tuple[Path, Path]:
+    """Builds `package`'s tests; returns its scratch path and the test product.
+
+    A WASI command (`_start`), unless the package depends on JavaScriptKit:
+    then a reactor, with build_wasm_app.py's toolset, as JavaScriptKit's
+    runtime refuses a command."""
     swift, sdk = find_wasm_sdk()
+    scratch = package / ".build" / "wasm"
     env = dict(os.environ, WASM_BUILD="1")
-    command = [swift, "build", "--build-tests", "--swift-sdk", sdk, "--scratch-path", str(SCRATCH)]
+    if subprocess.run([swift, "package", "resolve", "--scratch-path", str(scratch)], cwd=package, env=env).returncode != 0:
+        sys.exit("error: resolving the package failed")
+    state = json.loads((scratch / "workspace-state.json").read_text())
+    command = [swift, "build", "--build-tests", "--swift-sdk", sdk, "--scratch-path", str(scratch)]
+    if any(d["packageRef"]["identity"] == "javascriptkit" for d in state["object"]["dependencies"]):
+        toolset = scratch / "reactor-toolset-tests.json"
+        toolset.write_text(json.dumps(REACTOR_TOOLSET, indent=2))
+        command += ["--toolset", str(toolset)]
     print("+", " ".join(command), flush=True)
-    if subprocess.run(command, cwd=PACKAGE_ROOT, env=env).returncode != 0:
+    if subprocess.run(command, cwd=package, env=env).returncode != 0:
         sys.exit("error: building the tests for wasm failed")
-    product = SCRATCH / "debug" / "NucleantApplicationPackageTests.xctest"
-    if not product.is_file():
-        sys.exit(f"error: expected {product}")
-    return product
+    products = sorted((scratch / "debug").glob("*PackageTests.xctest"))
+    if len(products) != 1 or not products[0].is_file():
+        sys.exit(f"error: expected one *PackageTests.xctest in {scratch / 'debug'}")
+    return scratch, products[0]
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    """Serves the package, NucleantVulkan's web files under /Web/, and the page's reports."""
+    """Serves the page (this package's Web/), NucleantVulkan's web files under
+    /Web/, the test product as /tests.wasm, what was laid out for it (its
+    resources, JavaScriptKit's runtime) under /tests/, and the page's reports."""
 
     vulkan_web: Path
+    product: Path
+    site: Path
     # zoneinfo.bin, packed as build_wasm_app.py packs it for an app's page.
     zoneinfo: Path | None = None
     done = threading.Event()
@@ -102,6 +127,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(self.zoneinfo)
         if name.startswith("/Web/") and name[len("/Web/"):] in NUCLEANT_VULKAN_WEB:
             return str(self.vulkan_web / name[len("/Web/"):])
+        if name == "/tests.wasm":
+            return str(self.product)
+        # Where the page looks for it: next to nucleant-app.js.
+        if name == "/Web/javascriptkit-runtime.mjs":
+            return str(self.site / "javascriptkit-runtime.mjs")
+        if name.startswith("/tests/"):
+            return str(self.site / urllib.parse.unquote(name[len("/tests/"):]))
         return super().translate_path(path)
 
     def do_POST(self):
@@ -124,6 +156,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--package-path", type=Path, default=PACKAGE_ROOT,
+                        help="package whose tests to run (default this one)")
     parser.add_argument("--chrome", help="Chrome executable")
     parser.add_argument("--timeout", type=float, default=300, help="seconds before giving up")
     parser.add_argument("--headed", action="store_true", help="show the browser window")
@@ -131,10 +165,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     chrome = find_chrome(args.chrome)
-    Handler.vulkan_web = nucleant_vulkan_web()
-    product = build_tests()
+    scratch, product = build_tests(args.package_path.resolve())
+    Handler.vulkan_web = nucleant_vulkan_web(scratch)
+    Handler.product = product
 
     profile = tempfile.mkdtemp(prefix="nucleant-app-wasm-tests-")
+    Handler.site = Path(profile) / "site"
+    Handler.site.mkdir()
+    copy_resources(product.parent, Handler.site)
+    has_resources = bool(json.loads((Handler.site / "resources.json").read_text())["files"])
+    copy_javascriptkit_runtime(scratch, Handler.site)
     packed = pack_zoneinfo()
     if packed is not None:
         Handler.zoneinfo = Path(profile) / "zoneinfo.bin"
@@ -144,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     query = urllib.parse.urlencode({
-        "wasm": "/" + product.relative_to(PACKAGE_ROOT).as_posix(),
+        "wasm": "/tests.wasm",
+        "name": product.stem,
+        **({"resources": "/tests/resources.json"} if has_resources else {}),
         # The tests are Swift Testing; SwiftPM's runner defaults to XCTest.
         "args": json.dumps(["--testing-library", "swift-testing", *args.test_args]),
         **({"zoneinfo": "/zoneinfo.bin"} if Handler.zoneinfo else {}),
@@ -155,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     # A dark page (prefers-color-scheme), whatever the machine's own setting:
     # the appearance tests expect the app to see dark at launch.
     command = [chrome, f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
-               "--enable-unsafe-webgpu", "--blink-settings=preferredColorScheme=0", "--remote-debugging-port=0", url]
+               "--enable-unsafe-webgpu", "--blink-settings=preferredColorScheme=0", "--remote-debugging-port=0",
+               "--autoplay-policy=no-user-gesture-required", url]
     if not args.headed:
         command.insert(1, "--headless=new")
     browser = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

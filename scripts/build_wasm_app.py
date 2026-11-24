@@ -21,6 +21,9 @@ directory gets:
     nucleant-wgpu.js      the same bridge's webgpu.h (ThorVG's wg engine)
     nucleant-wasi.js      WASI for the Swift runtime
     naga_webgpu.wasm      SPIR-V -> WGSL for pipeline creation
+    javascriptkit-runtime.mjs
+                          JavaScriptKit's runtime, from its checkout, when
+                          the product is built with it
     resources/            the products' resource bundles (<Target>.resources),
     resources.json        and their list — the page mounts them read-only at
                           /app in the module's file system and sets
@@ -89,6 +92,9 @@ REACTOR_TOOLSET = {
 # Where the page mounts the resource bundles in the module's file system.
 RESOURCES_ROOT = "/app"
 NUCLEANT_VULKAN_WEB = ["nucleant-webgpu.js", "nucleant-wgpu.js", "nucleant-wasi.js", "naga_webgpu.wasm"]
+# JavaScriptKit's runtime, in its checkout: the page side of a module built
+# with JavaScriptKit, which the page loads for one (Web/nucleant-app.js).
+JAVASCRIPTKIT_RUNTIME = Path("Plugins") / "PackageToJS" / "Templates" / "runtime.mjs"
 ZONEINFO = Path("/usr/share/zoneinfo")
 # Source text and leap-second tables, and Debian's posix/ and right/ copies
 # of every zone: nothing in Foundation reads them.
@@ -208,6 +214,19 @@ def write_zoneinfo(output: Path) -> None:
     target.write_bytes(packed)
 
 
+def copy_javascriptkit_runtime(scratch: Path, output: Path) -> None:
+    """JavaScriptKit's runtime as javascriptkit-runtime.mjs, when the build has
+    JavaScriptKit: from the checkout it compiled, as the runtime and the
+    library check each other's version. Nothing (and no stale copy) otherwise."""
+    target = output / "javascriptkit-runtime.mjs"
+    source = scratch / "checkouts" / "JavaScriptKit" / JAVASCRIPTKIT_RUNTIME
+    target.unlink(missing_ok=True)
+    if source.is_file():
+        # The contents only: SwiftPM's checkouts are read-only, and a copy
+        # keeping that could not be replaced by the next build.
+        shutil.copyfile(source, target)
+
+
 def lay_out(product: str, products: Path, output: Path) -> None:
     built = products / f"{product}.wasm"
     output.mkdir(parents=True, exist_ok=True)
@@ -222,6 +241,7 @@ def lay_out(product: str, products: Path, output: Path) -> None:
         if not source.is_file():
             sys.exit(f"error: {source} is missing (NucleantVulkan/scripts/build_naga_wasm.py builds naga_webgpu.wasm)")
         shutil.copy2(source, output / name)
+    copy_javascriptkit_runtime(products.parent, output)
     copy_resources(products, output)
     write_zoneinfo(output)
     size = (output / f"{product}.wasm").stat().st_size / 1e6

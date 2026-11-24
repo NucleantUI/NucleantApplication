@@ -8,6 +8,9 @@
 // web pages shown in them into <iframe>s laid over those (BrowserFrame), and
 // page events into calls of the module's exports.
 //
+// A module built with JavaScriptKit imports a fourth, "javascript_kit": its
+// runtime, loaded only for such a module (loadJavaScriptKit).
+//
 //   import { runNucleantApp } from './nucleant-app.js';
 //   await runNucleantApp({ wasm: 'MyApp.wasm', container: document.getElementById('app') });
 //
@@ -54,6 +57,8 @@ const CAPTURED_KEYS = new Set(['Tab', 'Space', 'Backspace', 'ArrowUp', 'ArrowDow
  * @param {string|URL} [options.zoneinfo]    zoneinfo.bin (scripts/build_wasm_app.py): the time
  *   zone database, mounted at /usr/share/zoneinfo, where Foundation reads named zones
  * @param {string|URL} [options.nagaURL]     naga_webgpu.wasm; default next to this file
+ * @param {string|URL} [options.javaScriptKitURL]  JavaScriptKit's runtime, for a module built with
+ *   JavaScriptKit (see loadJavaScriptKit); default javascriptkit-runtime.mjs next to this file
  * @param {boolean} [options.jspi]           false to run as on a browser without JSPI
  * @param {(message: string) => void} [options.onError]  every WebGPU / translation error
  * @returns {Promise<{ instance: WebAssembly.Instance, dom: DOMBridge, gpu: object }>}
@@ -80,9 +85,13 @@ export async function runNucleantApp(options) {
   dom.resources = resources;
   const imports = { ...wasi.imports, ...gpu.imports, ...dom.imports };
   const bytes = await fetchModule(options.wasm);
-  const { instance } = resources?.hosts.length
-    ? await instantiateWithHosts(bytes, imports, resources)
-    : await WebAssembly.instantiate(bytes, imports);
+  const module = await WebAssembly.compile(bytes);
+  const javaScriptKit = await loadJavaScriptKit(module, options.javaScriptKitURL, gpu.blockingWaits);
+  if (javaScriptKit) Object.assign(imports, javaScriptKit.imports);
+  const instance = resources?.hosts.length
+    ? await instantiateWithHosts(bytes, module, imports, resources)
+    : await WebAssembly.instantiate(module, imports);
+  javaScriptKit?.attach(instance);
   gpu.attach(instance);
   wasi.attach(instance);
   dom.attach(instance, gpu.blockingWaits);
@@ -112,8 +121,7 @@ export async function runNucleantApp(options) {
  * `attach(instance)`, if given, is called once the module is instantiated,
  * before anything in it runs.
  */
-async function instantiateWithHosts(bytes, imports, resources) {
-  const module = await WebAssembly.compile(bytes);
+async function instantiateWithHosts(bytes, module, imports, resources) {
   const merged = { ...imports };
   const attachments = [];
   for (const url of resources.hosts) {
@@ -124,7 +132,73 @@ async function instantiateWithHosts(bytes, imports, resources) {
   }
   const instance = await WebAssembly.instantiate(module, merged);
   for (const attach of attachments) await attach(instance);
-  return { instance };
+  return instance;
+}
+
+/**
+ * JavaScriptKit's runtime, for a module built with JavaScriptKit — one that
+ * imports "javascript_kit" — and null for any other. It is the runtime of the
+ * JavaScriptKit the module was built against (scripts/build_wasm_app.py
+ * copies it next to this file as javascriptkit-runtime.mjs), as the two check
+ * each other's version: `{ imports, attach }`, the imports to add, and what
+ * gives the runtime the instance, to call before anything in the module runs.
+ *
+ * The module may import BridgeJS's intrinsics ("bjs") too: a build that
+ * wasm-opt hasn't stripped keeps them whether or not it uses BridgeJS. What
+ * implements them is the glue BridgeJS generates for a module's own
+ * bindings, which this page doesn't load — so each is a function that says
+ * so if it is ever called, and only a module that does use BridgeJS calls one.
+ *
+ * And it may import what the page adds to JavaScriptKit, "nucleant_javascriptkit":
+ *
+ *   await_promise(promise, result) → status
+ *
+ * waits for the promise JavaScriptKit holds as `promise` to settle — the
+ * module suspended meanwhile, under JSPI (`jspi`) — and writes the reference
+ * of what it settled to, as an object JavaScriptKit then holds, to the u32 at
+ * `result`: status 1 fulfilled, 0 rejected. Without JSPI it waits for nothing
+ * and returns -1. It suspends a call the page made into the module (an export
+ * wrapped with WebAssembly.promising), so it must be reached from one with
+ * no JavaScript in between — not from a JSClosure a page event called.
+ */
+export async function loadJavaScriptKit(module, url, jspi) {
+  const wanted = WebAssembly.Module.imports(module);
+  if (!wanted.some((entry) => entry.module === 'javascript_kit')) return null;
+  const { SwiftRuntime } = await import(url ?? new URL('javascriptkit-runtime.mjs', import.meta.url));
+  const runtime = new SwiftRuntime();
+  let memory = null;
+  const imports = { javascript_kit: runtime.wasmImports };
+  for (const { module: from, name, kind } of wanted) {
+    if (from !== 'bjs' || kind !== 'function') continue;
+    imports.bjs ??= {};
+    imports.bjs[name] = () => {
+      throw new Error(`[NucleantApplication] ${name}: BridgeJS bindings need the glue BridgeJS generates, which this page does not load`);
+    };
+  }
+  if (wanted.some((entry) => entry.module === 'nucleant_javascriptkit')) {
+    const settle = async (promise, result) => {
+      let status = 1;
+      let value;
+      try {
+        value = await runtime.memory.getObject(promise >>> 0);
+      } catch (error) {
+        status = 0;
+        value = error;
+      }
+      const isObject = value !== null && (typeof value === 'object' || typeof value === 'function');
+      const object = isObject ? value : status ? Object(value) : new Error(String(value));
+      new DataView(memory.buffer).setUint32(result >>> 0, runtime.memory.retain(object), true);
+      return status;
+    };
+    imports.nucleant_javascriptkit = { await_promise: jspi ? new WebAssembly.Suspending(settle) : () => -1 };
+  }
+  return {
+    imports,
+    attach(instance) {
+      memory = instance.exports.memory;
+      runtime.setInstance(instance);
+    },
+  };
 }
 
 /** A module's bytes; a URL ending in .gz is inflated (GitHub Pages serves .wasm uncompressed). */

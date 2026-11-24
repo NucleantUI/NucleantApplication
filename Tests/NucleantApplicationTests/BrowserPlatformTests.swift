@@ -262,8 +262,8 @@ final class TestNode: RenderContainerNode, @unchecked Sendable {
     }
 
     func observeContext() {}
-    func update(engine: Engine, cmd: VkCommandBuffer) {}
-    func destroyResources(engine: Engine) {}
+    func update(device: Device, cmd: VkCommandBuffer) {}
+    func destroyResources(device: Device) {}
     func getImageView() -> VkImageView? { nil }
 }
 
