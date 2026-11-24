@@ -25,6 +25,10 @@ protocol WaylandSurfaceHandler: AnyObject {
     func waylandSurfaceDidRequestClose()
     /// The window lost the keys to another.
     func waylandSurfaceDidDeactivate()
+    /// The window went out of sight — minimized, on another workspace — or
+    /// came back, as the window manager or compositor says. Told only when
+    /// it changes; a window starts out on screen.
+    func waylandSurfaceDidChangeVisibility(isOnScreen: Bool)
 
     func waylandPointerDown(at location: SIMD2<Double>)
     func waylandPointerUp(at location: SIMD2<Double>)
@@ -192,6 +196,16 @@ final class WaylandSurface {
 
     /// The compositor last said the window has the keys.
     private var isActivated = false
+
+    /// The compositor last said the window is suspended: out of sight —
+    /// minimized, on another workspace, covered, the screen locked, as it
+    /// decides — so nothing it draws is seen, and frame callbacks stop.
+    /// xdg-shell's `suspended` state, from version 6; a compositor that
+    /// binds an older one never says, and the window stays on screen.
+    private var isSuspended = false
+    /// What the toplevel configure in progress says, adopted with the
+    /// xdg_surface configure that ends it.
+    private var pendingSuspended = false
 
     /// Mapped, or about to be on its next buffer: the surface has its
     /// toplevel role object.
@@ -581,6 +595,10 @@ final class WaylandSurface {
             // preferred_buffer_scale can arrive first and also lands in
             // applyConfigure, but it isn't permission to start drawing.
             me.isConfigured = true
+            if me.pendingSuspended != me.isSuspended {
+                me.isSuspended = me.pendingSuspended
+                me.handler?.waylandSurfaceDidChangeVisibility(isOnScreen: !me.isSuspended)
+            }
         }
         return listener
     }
@@ -592,6 +610,7 @@ final class WaylandSurface {
             me.pendingWidth = Double(width)
             me.pendingHeight = Double(height)
             me.isFloating = !containsSizingState(states)
+            me.pendingSuspended = containsState(XDG_TOPLEVEL_STATE_SUSPENDED.rawValue, states)
             // Had the keys and has them no longer: another window took them.
             let activated = containsState(XDG_TOPLEVEL_STATE_ACTIVATED.rawValue, states)
             let deactivated = me.isActivated && !activated

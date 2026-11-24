@@ -149,6 +149,18 @@ public final class X11Display {
         return (0..<count).map { words[$0] }
     }
 
+    /// An `ATOM` property's values, such as a window's `_NET_WM_STATE`.
+    func atoms(_ property: xcb_atom_t, of window: xcb_window_t) -> [xcb_atom_t] {
+        guard let connectionHandle, property != 0 else { return [] }
+        let cookie = xcb_get_property(connectionHandle, 0, window, property, UInt32(XCB_ATOM_ATOM.rawValue), 0, 1024)
+        guard let reply = xcb_get_property_reply(connectionHandle, cookie, nil) else { return [] }
+        defer { free(reply) }
+        guard reply.pointee.format == 32, let value = xcb_get_property_value(reply) else { return [] }
+        let count = Int(xcb_get_property_value_length(reply)) / 4
+        let atoms = value.assumingMemoryBound(to: xcb_atom_t.self)
+        return (0..<count).map { atoms[$0] }
+    }
+
     private func internAtom(_ connection: OpaquePointer, _ name: String) -> xcb_atom_t {
         let cookie = name.utf8CString.withUnsafeBufferPointer { buf in
             xcb_intern_atom(connection, 0, UInt16(buf.count - 1), buf.baseAddress)
@@ -313,6 +325,26 @@ public final class X11Display {
 
         case XCB_EXPOSE:
             break // frame ticks come from tickWindows(), not Expose
+
+        case XCB_UNMAP_NOTIFY:
+            event.withMemoryRebound(to: xcb_unmap_notify_event_t.self, capacity: 1) { e in
+                window(for: e.pointee.window)?.handleUnmap()
+            }
+
+        case XCB_VISIBILITY_NOTIFY:
+            // Sent as a window becomes viewable, and as it is covered or
+            // uncovered while it is — never as it stops being viewable.
+            event.withMemoryRebound(to: xcb_visibility_notify_event_t.self, capacity: 1) { e in
+                window(for: e.pointee.window)?.handleVisibility(
+                    isFullyObscured: UInt32(e.pointee.state) == XCB_VISIBILITY_FULLY_OBSCURED.rawValue
+                )
+            }
+
+        case XCB_PROPERTY_NOTIFY:
+            event.withMemoryRebound(to: xcb_property_notify_event_t.self, capacity: 1) { e in
+                guard e.pointee.atom == atom("_NET_WM_STATE") else { return }
+                window(for: e.pointee.window)?.handleWindowStateChange()
+            }
 
         case XCB_FOCUS_OUT:
             event.withMemoryRebound(to: xcb_focus_out_event_t.self, capacity: 1) { e in

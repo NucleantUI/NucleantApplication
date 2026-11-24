@@ -39,6 +39,18 @@ final class X11Window {
     /// Mapped — on screen, as far as this client is concerned.
     private(set) var isMapped = false
 
+    /// Unmapped by the window manager while the app has it shown: what
+    /// ICCCM has a window manager do to a window it minimizes, and what
+    /// most do to the windows of a workspace they switch away from.
+    private var isUnmappedByWindowManager = false
+    /// `_NET_WM_STATE_HIDDEN` in the window's `_NET_WM_STATE`: EWMH's
+    /// word for a window that is out of sight, minimized above all — for
+    /// the window managers that keep a minimized window mapped, to show
+    /// it in a thumbnail.
+    private var isHiddenByWindowManager = false
+    /// What the handler was last told; a window starts out on screen.
+    private var isOnScreen = true
+
     init(width: Double, height: Double, title: String, isTrayPanel: Bool = false) throws {
         try X11Display.shared.connect()
         guard let connection = X11Display.shared.connectionHandle,
@@ -63,6 +75,10 @@ final class X11Window {
             | XCB_EVENT_MASK_KEY_PRESS.rawValue
             | XCB_EVENT_MASK_KEY_RELEASE.rawValue
             | XCB_EVENT_MASK_FOCUS_CHANGE.rawValue
+            // `_NET_WM_STATE`, which the window manager sets on the window,
+            // and its becoming viewable: the window's phase.
+            | XCB_EVENT_MASK_PROPERTY_CHANGE.rawValue
+            | XCB_EVENT_MASK_VISIBILITY_CHANGE.rawValue
 
         withUnsafeMutablePointer(to: &eventMask) { eventMaskPtr in
             _ = xcb_create_window(
@@ -198,12 +214,26 @@ final class X11Window {
         }
     }
 
-    /// Minimize/maximize/fullscreen all need the window manager's cooperation
-    /// via EWMH client messages (`_NET_WM_STATE`, `WM_CHANGE_STATE`) that
-    /// aren't wired up yet — a plain top-level window is enough to get real,
-    /// WM-decorated, movable windows working; these are no-ops until that's
-    /// added.
-    func minimize() {}
+    /// Asks the window manager to minimize the window: ICCCM's
+    /// `WM_CHANGE_STATE` to `IconicState`, which every window manager that
+    /// minimizes windows understands. Out of sight, it is in the
+    /// background (`handleMap`), and `show()` or `activate()` brings it
+    /// back.
+    func minimize() {
+        guard isMapped else { return }
+        var event = xcb_client_message_event_t()
+        event.response_type = UInt8(XCB_CLIENT_MESSAGE)
+        event.format = 32
+        event.window = handle
+        event.type = X11Display.shared.atom("WM_CHANGE_STATE")
+        event.data.data32 = (3, 0, 0, 0, 0)          // IconicState
+        sendToRoot(&event)
+    }
+
+    /// Maximize and fullscreen need the window manager's cooperation via
+    /// EWMH's `_NET_WM_STATE` client messages, which aren't wired up yet —
+    /// a plain top-level window is enough to get real, WM-decorated,
+    /// movable windows working; these are no-ops until that's added.
     func setMaximized(_ maximized: Bool) {}
     func setFullscreen(_ fullscreen: Bool) {}
 
@@ -215,9 +245,11 @@ final class X11Window {
 
     /// Off the screen, until `show()`. Unmapped, it is withdrawn: the
     /// window manager forgets it, and places it again when it is mapped.
+    /// The app's own doing, so it leaves the phase as it was.
     func hide() {
         guard isMapped else { return }
         isMapped = false
+        isUnmappedByWindowManager = false
         _ = xcb_unmap_window(connection, handle)
         _ = xcb_flush(connection)
     }
@@ -344,6 +376,46 @@ final class X11Window {
         self.width = width
         self.height = height
         handler?.waylandSurfaceDidResize(width: width, height: height)
+    }
+
+    /// The server unmapped the window. While the app has it shown, it is
+    /// the window manager that took it off the screen.
+    func handleUnmap() {
+        guard isMapped else { return }
+        isUnmappedByWindowManager = true
+        updateVisibility()
+    }
+
+    /// The window became viewable — mapped, with the window manager's
+    /// frame around it — or was covered or uncovered while it is.
+    ///
+    /// Unmapped by the window manager, it is back on screen only once it
+    /// is viewable and not wholly covered, not when it is mapped again: X
+    /// keeps nothing of an unmapped window's pixels, and a frame presented
+    /// before the window manager maps the frame, or while the frame still
+    /// covers it — as Openbox's does for a moment on a restore — is lost,
+    /// so the window would come back blank. Covered while it is on screen,
+    /// it stays there: a window behind others is active, as on macOS.
+    func handleVisibility(isFullyObscured: Bool) {
+        guard !isFullyObscured else { return }
+        isUnmappedByWindowManager = false
+        updateVisibility()
+    }
+
+    /// The window manager changed `_NET_WM_STATE`.
+    func handleWindowStateChange() {
+        let display = X11Display.shared
+        let hidden = display.atom("_NET_WM_STATE_HIDDEN")
+        isHiddenByWindowManager = hidden != 0 && display.atoms(display.atom("_NET_WM_STATE"), of: handle).contains(hidden)
+        updateVisibility()
+    }
+
+    /// Tells the handler when the window goes out of sight or comes back.
+    private func updateVisibility() {
+        let onScreen = !isUnmappedByWindowManager && !isHiddenByWindowManager
+        guard onScreen != isOnScreen else { return }
+        isOnScreen = onScreen
+        handler?.waylandSurfaceDidChangeVisibility(isOnScreen: onScreen)
     }
 }
 #endif
