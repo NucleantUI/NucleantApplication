@@ -363,6 +363,27 @@ public final class PlatformWindow<WindowBase>: WaylandSurfaceHandler
         on_deactivate?()
     }
 
+    // MARK: - Phase
+
+    /// Whether `win_delegate` was last told the window is in the
+    /// background; a window starts out active.
+    private var isInBackground = false
+
+    /// In the background while it is out of sight, active while it is on
+    /// screen — behind other windows, or without the keys, included, as on
+    /// macOS. Linux has no inactive window: what macOS makes inactive, a
+    /// window minimized into the Dock and still drawn there, takes a Linux
+    /// window off the screen.
+    func waylandSurfaceDidChangeVisibility(isOnScreen: Bool) {
+        guard isOnScreen == isInBackground else { return }
+        isInBackground = !isOnScreen
+        if isOnScreen {
+            win_delegate?.on_phase_active()
+        } else {
+            win_delegate?.on_phase_background()
+        }
+    }
+
     func waylandPointerDown(at location: SIMD2<Double>) {
         win_delegate?.mouseDown(location: location)
     }

@@ -68,9 +68,12 @@ public protocol NucleantWindow: AnyObject {
     //   front in split screen — and on its way to the background.
     // - background: not on screen at all — the app hidden, on macOS; on iOS,
     //   its scene off screen, where the GPU work it submits is refused; on
-    //   Android, the Activity stopped, or without a surface to draw into.
-    //   Nothing the window draws is seen until it is active or inactive
-    //   again.
+    //   Android, the Activity stopped, or without a surface to draw into; on
+    //   Linux, out of sight as the window manager or compositor says —
+    //   minimized, or on a workspace not shown: on X11 unmapped by the
+    //   window manager or marked _NET_WM_STATE_HIDDEN, on Wayland suspended
+    //   by the compositor (xdg-shell 6). Nothing the window draws is seen
+    //   until it is active or inactive again.
     //
     // A platform that tells none of them leaves its windows active.
     func on_phase_active()
