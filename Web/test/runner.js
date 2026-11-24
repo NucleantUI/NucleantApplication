@@ -1,5 +1,6 @@
-// Runs NucleantApplication's SwiftPM test product (built for wasm32-wasip1)
-// in this page, with the same three hosts an app gets from nucleant-app.js:
+// Runs a package's SwiftPM test product (built for wasm32-wasip1) —
+// NucleantApplication's, or another's (run_wasm_tests.py --package-path) — in
+// this page, with the same three hosts an app gets from nucleant-app.js:
 // WASI, the WebGPU bridge, and the DOM bridge — so windows are real canvases
 // and the frame loop is the page's requestAnimationFrame.
 //
@@ -14,7 +15,7 @@
 
 import { createNucleantWebGPU } from '../nucleant-webgpu.js';
 import { NucleantWASI, WASIExit } from '../nucleant-wasi.js';
-import { DOMBridge, loadResources, loadZoneinfo } from '../nucleant-app.js';
+import { DOMBridge, loadJavaScriptKit, loadResources, loadZoneinfo } from '../nucleant-app.js';
 
 const params = new URLSearchParams(location.search);
 const output = document.getElementById('output');
@@ -49,8 +50,11 @@ async function run() {
     jspi: gpu.blockingWaits,
   });
   const dom = new DOMBridge(document.getElementById('windows'));
-  const bytes = await (await fetch(params.get('wasm'))).arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, { ...wasi.imports, ...gpu.imports, ...dom.imports });
+  const module = await WebAssembly.compile(await (await fetch(params.get('wasm'))).arrayBuffer());
+  // A test product built with JavaScriptKit gets its runtime, as an app does.
+  const javaScriptKit = await loadJavaScriptKit(module, undefined, gpu.blockingWaits);
+  const instance = await WebAssembly.instantiate(module, { ...wasi.imports, ...gpu.imports, ...dom.imports, ...javaScriptKit?.imports });
+  javaScriptKit?.attach(instance);
   gpu.attach(instance);
   wasi.attach(instance);
   dom.attach(instance, gpu.blockingWaits);
@@ -59,9 +63,16 @@ async function run() {
   try {
     // The tests run as one long call; frames and events the page delivers
     // meanwhile go through the DOM bridge's queue while it is suspended in a
-    // sleep (JSPI), as they would between an app's calls.
-    const start = gpu.blockingWaits ? WebAssembly.promising(instance.exports._start) : instance.exports._start;
-    await start();
+    // sleep (JSPI), as they would between an app's calls. A WASI command
+    // runs from _start; a reactor (what JavaScriptKit needs) from its main,
+    // once its constructors have, as an app's does (nucleant-app.js).
+    const { _start, _initialize, __main_argc_argv } = instance.exports;
+    if (_start) {
+      await (gpu.blockingWaits ? WebAssembly.promising(_start) : _start)();
+    } else {
+      _initialize?.();
+      status = await (gpu.blockingWaits ? WebAssembly.promising(__main_argc_argv) : __main_argc_argv)(0, 0);
+    }
   } catch (error) {
     if (error instanceof WASIExit) status = error.code;
     else {

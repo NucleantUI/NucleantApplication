@@ -86,12 +86,12 @@ export async function runNucleantApp(options) {
   const imports = { ...wasi.imports, ...gpu.imports, ...dom.imports };
   const bytes = await fetchModule(options.wasm);
   const module = await WebAssembly.compile(bytes);
-  const javaScriptKit = await loadJavaScriptKit(module, options.javaScriptKitURL);
+  const javaScriptKit = await loadJavaScriptKit(module, options.javaScriptKitURL, gpu.blockingWaits);
   if (javaScriptKit) Object.assign(imports, javaScriptKit.imports);
   const instance = resources?.hosts.length
     ? await instantiateWithHosts(bytes, module, imports, resources)
     : await WebAssembly.instantiate(module, imports);
-  javaScriptKit?.runtime.setInstance(instance);
+  javaScriptKit?.attach(instance);
   gpu.attach(instance);
   wasi.attach(instance);
   dom.attach(instance, gpu.blockingWaits);
@@ -140,20 +140,33 @@ async function instantiateWithHosts(bytes, module, imports, resources) {
  * imports "javascript_kit" — and null for any other. It is the runtime of the
  * JavaScriptKit the module was built against (scripts/build_wasm_app.py
  * copies it next to this file as javascriptkit-runtime.mjs), as the two check
- * each other's version: `{ runtime, imports }`, the imports to add and the
- * runtime to give the instance before anything in the module runs.
+ * each other's version: `{ imports, attach }`, the imports to add, and what
+ * gives the runtime the instance, to call before anything in the module runs.
  *
  * The module may import BridgeJS's intrinsics ("bjs") too: a build that
  * wasm-opt hasn't stripped keeps them whether or not it uses BridgeJS. What
  * implements them is the glue BridgeJS generates for a module's own
  * bindings, which this page doesn't load — so each is a function that says
  * so if it is ever called, and only a module that does use BridgeJS calls one.
+ *
+ * And it may import what the page adds to JavaScriptKit, "nucleant_javascriptkit":
+ *
+ *   await_promise(promise, result) → status
+ *
+ * waits for the promise JavaScriptKit holds as `promise` to settle — the
+ * module suspended meanwhile, under JSPI (`jspi`) — and writes the reference
+ * of what it settled to, as an object JavaScriptKit then holds, to the u32 at
+ * `result`: status 1 fulfilled, 0 rejected. Without JSPI it waits for nothing
+ * and returns -1. It suspends a call the page made into the module (an export
+ * wrapped with WebAssembly.promising), so it must be reached from one with
+ * no JavaScript in between — not from a JSClosure a page event called.
  */
-async function loadJavaScriptKit(module, url) {
+export async function loadJavaScriptKit(module, url, jspi) {
   const wanted = WebAssembly.Module.imports(module);
   if (!wanted.some((entry) => entry.module === 'javascript_kit')) return null;
   const { SwiftRuntime } = await import(url ?? new URL('javascriptkit-runtime.mjs', import.meta.url));
   const runtime = new SwiftRuntime();
+  let memory = null;
   const imports = { javascript_kit: runtime.wasmImports };
   for (const { module: from, name, kind } of wanted) {
     if (from !== 'bjs' || kind !== 'function') continue;
@@ -162,7 +175,30 @@ async function loadJavaScriptKit(module, url) {
       throw new Error(`[NucleantApplication] ${name}: BridgeJS bindings need the glue BridgeJS generates, which this page does not load`);
     };
   }
-  return { runtime, imports };
+  if (wanted.some((entry) => entry.module === 'nucleant_javascriptkit')) {
+    const settle = async (promise, result) => {
+      let status = 1;
+      let value;
+      try {
+        value = await runtime.memory.getObject(promise >>> 0);
+      } catch (error) {
+        status = 0;
+        value = error;
+      }
+      const isObject = value !== null && (typeof value === 'object' || typeof value === 'function');
+      const object = isObject ? value : status ? Object(value) : new Error(String(value));
+      new DataView(memory.buffer).setUint32(result >>> 0, runtime.memory.retain(object), true);
+      return status;
+    };
+    imports.nucleant_javascriptkit = { await_promise: jspi ? new WebAssembly.Suspending(settle) : () => -1 };
+  }
+  return {
+    imports,
+    attach(instance) {
+      memory = instance.exports.memory;
+      runtime.setInstance(instance);
+    },
+  };
 }
 
 /** A module's bytes; a URL ending in .gz is inflated (GitHub Pages serves .wasm uncompressed). */
