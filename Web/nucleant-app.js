@@ -8,6 +8,9 @@
 // web pages shown in them into <iframe>s laid over those (BrowserFrame), and
 // page events into calls of the module's exports.
 //
+// A module built with JavaScriptKit imports a fourth, "javascript_kit": its
+// runtime, loaded only for such a module (loadJavaScriptKit).
+//
 //   import { runNucleantApp } from './nucleant-app.js';
 //   await runNucleantApp({ wasm: 'MyApp.wasm', container: document.getElementById('app') });
 //
@@ -54,6 +57,8 @@ const CAPTURED_KEYS = new Set(['Tab', 'Space', 'Backspace', 'ArrowUp', 'ArrowDow
  * @param {string|URL} [options.zoneinfo]    zoneinfo.bin (scripts/build_wasm_app.py): the time
  *   zone database, mounted at /usr/share/zoneinfo, where Foundation reads named zones
  * @param {string|URL} [options.nagaURL]     naga_webgpu.wasm; default next to this file
+ * @param {string|URL} [options.javaScriptKitURL]  JavaScriptKit's runtime, for a module built with
+ *   JavaScriptKit (see loadJavaScriptKit); default javascriptkit-runtime.mjs next to this file
  * @param {boolean} [options.jspi]           false to run as on a browser without JSPI
  * @param {(message: string) => void} [options.onError]  every WebGPU / translation error
  * @returns {Promise<{ instance: WebAssembly.Instance, dom: DOMBridge, gpu: object }>}
@@ -80,9 +85,13 @@ export async function runNucleantApp(options) {
   dom.resources = resources;
   const imports = { ...wasi.imports, ...gpu.imports, ...dom.imports };
   const bytes = await fetchModule(options.wasm);
-  const { instance } = resources?.hosts.length
-    ? await instantiateWithHosts(bytes, imports, resources)
-    : await WebAssembly.instantiate(bytes, imports);
+  const module = await WebAssembly.compile(bytes);
+  const javaScriptKit = await loadJavaScriptKit(module, options.javaScriptKitURL);
+  if (javaScriptKit) Object.assign(imports, javaScriptKit.imports);
+  const instance = resources?.hosts.length
+    ? await instantiateWithHosts(bytes, module, imports, resources)
+    : await WebAssembly.instantiate(module, imports);
+  javaScriptKit?.runtime.setInstance(instance);
   gpu.attach(instance);
   wasi.attach(instance);
   dom.attach(instance, gpu.blockingWaits);
@@ -112,8 +121,7 @@ export async function runNucleantApp(options) {
  * `attach(instance)`, if given, is called once the module is instantiated,
  * before anything in it runs.
  */
-async function instantiateWithHosts(bytes, imports, resources) {
-  const module = await WebAssembly.compile(bytes);
+async function instantiateWithHosts(bytes, module, imports, resources) {
   const merged = { ...imports };
   const attachments = [];
   for (const url of resources.hosts) {
@@ -124,7 +132,37 @@ async function instantiateWithHosts(bytes, imports, resources) {
   }
   const instance = await WebAssembly.instantiate(module, merged);
   for (const attach of attachments) await attach(instance);
-  return { instance };
+  return instance;
+}
+
+/**
+ * JavaScriptKit's runtime, for a module built with JavaScriptKit — one that
+ * imports "javascript_kit" — and null for any other. It is the runtime of the
+ * JavaScriptKit the module was built against (scripts/build_wasm_app.py
+ * copies it next to this file as javascriptkit-runtime.mjs), as the two check
+ * each other's version: `{ runtime, imports }`, the imports to add and the
+ * runtime to give the instance before anything in the module runs.
+ *
+ * The module may import BridgeJS's intrinsics ("bjs") too: a build that
+ * wasm-opt hasn't stripped keeps them whether or not it uses BridgeJS. What
+ * implements them is the glue BridgeJS generates for a module's own
+ * bindings, which this page doesn't load — so each is a function that says
+ * so if it is ever called, and only a module that does use BridgeJS calls one.
+ */
+async function loadJavaScriptKit(module, url) {
+  const wanted = WebAssembly.Module.imports(module);
+  if (!wanted.some((entry) => entry.module === 'javascript_kit')) return null;
+  const { SwiftRuntime } = await import(url ?? new URL('javascriptkit-runtime.mjs', import.meta.url));
+  const runtime = new SwiftRuntime();
+  const imports = { javascript_kit: runtime.wasmImports };
+  for (const { module: from, name, kind } of wanted) {
+    if (from !== 'bjs' || kind !== 'function') continue;
+    imports.bjs ??= {};
+    imports.bjs[name] = () => {
+      throw new Error(`[NucleantApplication] ${name}: BridgeJS bindings need the glue BridgeJS generates, which this page does not load`);
+    };
+  }
+  return { runtime, imports };
 }
 
 /** A module's bytes; a URL ending in .gz is inflated (GitHub Pages serves .wasm uncompressed). */
