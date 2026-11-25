@@ -599,7 +599,13 @@ export class DOMBridge {
     canvas.className = 'nucleant-window';
     canvas.tabIndex = 0;
     canvas.title = title;
-    Object.assign(canvas.style, { width: `${width}px`, height: `${height}px`, display: 'block', touchAction: 'none', outline: 'none' });
+    // The canvas is an app's window, not part of a document: quick presses
+    // on it (a double click, a long press) must not select it or the page
+    // around it, show a touch callout, or flash a tap highlight.
+    Object.assign(canvas.style, {
+      width: `${width}px`, height: `${height}px`, display: 'block', touchAction: 'none', outline: 'none',
+      userSelect: 'none', webkitUserSelect: 'none', webkitTouchCallout: 'none', webkitTapHighlightColor: 'transparent',
+    });
     const window = { id, canvas, title, width, height, cssWidth: width, cssHeight: height, observer: null };
     this.resizeCanvas(window, width, height, null);
     this.container.appendChild(canvas);
@@ -928,6 +934,12 @@ export class DOMBridge {
       if (event.type !== 'pointermove') event.preventDefault();
     };
     for (const type of Object.keys(POINTER_PHASE)) canvas.addEventListener(type, pointer);
+    // A finger held on the canvas is a press held, not the start of the
+    // browser's own gestures: on iOS a long press would select the page,
+    // open the copy menu and cancel the press, and a double tap would zoom.
+    // The pointer events keep coming; only the touch's default actions go.
+    canvas.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
+    canvas.addEventListener('selectstart', (event) => event.preventDefault());
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();
