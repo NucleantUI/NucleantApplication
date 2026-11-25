@@ -934,6 +934,12 @@ export class DOMBridge {
       if (event.type !== 'pointermove') event.preventDefault();
     };
     for (const type of Object.keys(POINTER_PHASE)) canvas.addEventListener(type, pointer);
+    // A finger held on the canvas is a press held, not the start of the
+    // browser's own gestures: on iOS a long press would select the page,
+    // open the copy menu and cancel the press, and a double tap would zoom.
+    // The pointer events keep coming; only the touch's default actions go.
+    canvas.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
+    canvas.addEventListener('selectstart', (event) => event.preventDefault());
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault();

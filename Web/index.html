@@ -10,8 +10,10 @@
     html, body { margin: 0; height: 100%; background: light-dark(#e2e2e8, #16161a); color: light-dark(#222, #ddd); font: 14px/1.4 system-ui, sans-serif; }
     /* The browser window is the app's screen: a window fills it and follows
        it, within the limits the app sets. Smaller than a window's minimum,
-       the page scrolls; larger than its maximum, the window sits centred. */
-    #app { display: flex; flex-wrap: wrap; height: 100dvh; overflow: auto; }
+       the page scrolls; larger than its maximum, the window sits centred.
+       Nothing on it is text to select: a long press around a window selects
+       nothing, and opens no copy menu. */
+    #app { display: flex; flex-wrap: wrap; height: 100dvh; overflow: auto; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     .nucleant-window { margin: auto; }
     .nucleant-window:not(.nucleant-window-fills), .nucleant-window-bounded { box-shadow: 0 6px 30px light-dark(rgb(0 0 0 / 0.2), rgb(0 0 0 / 0.45)); }
     .nucleant-window:focus-visible { outline: 2px solid #6aa0ff; outline-offset: -2px; }
