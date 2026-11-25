@@ -599,7 +599,13 @@ export class DOMBridge {
     canvas.className = 'nucleant-window';
     canvas.tabIndex = 0;
     canvas.title = title;
-    Object.assign(canvas.style, { width: `${width}px`, height: `${height}px`, display: 'block', touchAction: 'none', outline: 'none' });
+    // The canvas is an app's window, not part of a document: quick presses
+    // on it (a double click, a long press) must not select it or the page
+    // around it, show a touch callout, or flash a tap highlight.
+    Object.assign(canvas.style, {
+      width: `${width}px`, height: `${height}px`, display: 'block', touchAction: 'none', outline: 'none',
+      userSelect: 'none', webkitUserSelect: 'none', webkitTouchCallout: 'none', webkitTapHighlightColor: 'transparent',
+    });
     const window = { id, canvas, title, width, height, cssWidth: width, cssHeight: height, observer: null };
     this.resizeCanvas(window, width, height, null);
     this.container.appendChild(canvas);
